@@ -87,3 +87,29 @@ CREATE TABLE IF NOT EXISTS consumer_offsets (
   last_event_id INTEGER NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS analysis_runs (
+  run_id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES cases(case_id),
+  status TEXT NOT NULL CHECK (status IN (
+    'pending','extracting','building_claims',
+    'checking_contradictions','skeptic_review',
+    'generating_report','completed','failed'
+  )),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  started_by TEXT NOT NULL,
+  error_detail TEXT,
+  result_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS extractions (
+  extraction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES analysis_runs(run_id),
+  file_id TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  extracted_text TEXT NOT NULL,
+  entities_json TEXT,
+  timestamps_json TEXT,
+  created_at TEXT NOT NULL
+);

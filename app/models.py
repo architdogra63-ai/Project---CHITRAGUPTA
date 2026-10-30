@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 
 class LoginResponse(BaseModel):
@@ -94,3 +94,86 @@ class AlertOut(BaseModel):
     message: str
     acknowledged: int
     acknowledged_by: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Agent / Phase-2 models
+# ---------------------------------------------------------------------------
+
+class AnalysisRunOut(BaseModel):
+    run_id: str
+    case_id: str
+    status: str
+    started_at: str
+    completed_at: Optional[str] = None
+    started_by: str
+    error_detail: Optional[str] = None
+
+
+class AnalysisStartResponse(BaseModel):
+    run_id: str
+    case_id: str
+    status: str
+    message: str
+
+
+class ExtractionOut(BaseModel):
+    extraction_id: int
+    run_id: str
+    file_id: str
+    source_ref: str
+    extracted_text: str
+    entities_json: Optional[str] = None
+    timestamps_json: Optional[str] = None
+    created_at: str
+
+
+class ClaimOut(BaseModel):
+    claim_id: str
+    claim_type: str
+    text: str
+    when: Optional[str] = None
+    source_file_id: str
+    source_ref: str
+    confidence: Optional[float] = None
+    entities: list[str] = Field(default_factory=list)
+    status: str = "active"
+
+
+class FlagOut(BaseModel):
+    flag_id: str
+    conflict_type: str
+    claim_a: str
+    claim_b: str
+    description: str
+    entities: list[str] = Field(default_factory=list)
+    skeptic_verdict: Optional[str] = None
+    reviewer_decision: Optional[str] = None
+
+
+class GraphNodeOut(BaseModel):
+    id: str
+    label: str
+    type: str
+    claim_count: int = 0
+    evidence_count: int = 0
+    degree: int = 0
+    suspiciousness: float = 0.0
+    cluster: int = 0
+
+
+class GraphEdgeOut(BaseModel):
+    source: str
+    target: str
+    weight: int
+    claims: list[str] = Field(default_factory=list)
+
+
+class InvestigationLead(BaseModel):
+    entity_id: str
+    entity_label: str
+    entity_type: str
+    suspiciousness_score: float
+    degree: int
+    claim_count: int
+    suggestion: str

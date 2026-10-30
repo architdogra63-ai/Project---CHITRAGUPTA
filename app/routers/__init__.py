@@ -1,6 +1,6 @@
 """Routers package."""
 
-from . import auth_router, cases_router, evidence_router, ledger_router, admin_router
+from . import auth_router, cases_router, evidence_router, ledger_router, admin_router, agent_router
 
 __all__ = [
     "auth_router",
@@ -8,4 +8,5 @@ __all__ = [
     "evidence_router",
     "ledger_router",
     "admin_router",
+    "agent_router",
 ]
