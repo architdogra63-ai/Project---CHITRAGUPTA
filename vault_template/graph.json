@@ -1,0 +1,55 @@
+{
+  "groups": [
+    {
+      "query": "tag:#evidence",
+      "color": "#00bcd4"
+    },
+    {
+      "query": "tag:#tampered",
+      "color": "#f44336"
+    },
+    {
+      "query": "tag:#quarantined",
+      "color": "#ff9800"
+    },
+    {
+      "query": "tag:#claim",
+      "color": "#9e9e9e"
+    },
+    {
+      "query": "tag:#stale",
+      "color": "#e0e0e0"
+    },
+    {
+      "query": "tag:#person",
+      "color": "#9c27b0"
+    },
+    {
+      "query": "tag:#account",
+      "color": "#2196f3"
+    },
+    {
+      "query": "tag:#phone",
+      "color": "#4caf50"
+    },
+    {
+      "query": "tag:#place",
+      "color": "#ffc107"
+    },
+    {
+      "query": "tag:#device",
+      "color": "#e91e63"
+    },
+    {
+      "query": "tag:#conflict",
+      "color": "#ff1744"
+    },
+    {
+      "query": "tag:#conflict-dismissed",
+      "color": "#ffcdd2"
+    }
+  ],
+  "filters": {
+    "orpha": true
+  }
+}

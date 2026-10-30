@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# Environment
+.env
+.env.local
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+
+# Storage
+storage/
+
+# Vault
+vault/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+#photos
+
+Pasted image.png
+Pasted image (2).png
+59e4918d-8eef-49dc-8f4c-cec0c6eb6f1a.png

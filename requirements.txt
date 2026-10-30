@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-multipart
+cryptography
+PyJWT
+bcrypt
+pydantic
+python-dotenv
+pytest
+httpx
+pyyaml
+openai
