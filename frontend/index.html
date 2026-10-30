@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHITRAGUPTA - Identity Auth</title>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: 'Manrope', sans-serif; }
+        @keyframes scanline { 0% { top: 0%; opacity: 0.8; } 50% { opacity: 1; } 100% { top: 100%; opacity: 0.8; } }
+        .animate-scan-line { position: absolute; width: 100%; height: 2px; background: #3b8cff; box-shadow: 0 0 8px #3b8cff; animation: scanline 2.2s ease-in-out infinite alternate; }
+    </style>
+</head>
+<body class="bg-black text-[#e3edf8] antialiased">
+
+    <div id="auth-container" class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between relative">
+        <header class="w-full max-w-6xl mx-auto px-4 py-4 flex justify-between items-center z-30">
+            <div class="flex items-center space-x-3">
+                <div class="p-2 bg-blue-600 rounded-xl text-white shadow-lg shadow-blue-500/30">
+                    <i data-lucide="shield-check" class="w-6 h-6"></i>
+                </div>
+                <h1 class="text-lg font-bold tracking-wider">CHITRAGUPTA</h1>
+            </div>
+        </header>
+
+        <main class="w-full max-w-md mx-auto px-4 py-6 flex-1 flex flex-col justify-center relative">
+            <div id="corner-verified-badge" class="hidden absolute -top-3 -right-3 z-50 flex items-center justify-center">
+                <div class="relative flex items-center justify-center">
+                    <span class="animate-ping absolute inline-flex h-12 w-12 rounded-full bg-emerald-400 opacity-75"></span>
+                    <div class="relative inline-flex rounded-full h-12 w-12 bg-emerald-500 text-white items-center justify-center shadow-lg border-2 border-slate-900">
+                        <i data-lucide="check" class="w-7 h-7 stroke-[3]"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card rounded-3xl border border-slate-800 bg-slate-900/60 shadow-2xl overflow-hidden relative">
+                <!-- LOGIN FORM -->
+                <div id="login-view" class="p-6 sm:p-8 space-y-6">
+                    <div class="text-center space-y-1">
+                        <h2 class="text-2xl font-bold tracking-tight">Identity Authentication</h2>
+                    </div>
+
+                    <form id="login-form" onsubmit="handleLoginSubmit(event)" class="space-y-5">
+                        <div class="space-y-1.5">
+                            <label for="username" class="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+                                Username / Full Name
+                            </label>
+                            <div class="relative">
+                                <i data-lucide="user" class="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                                <input type="text" id="username" placeholder="Enter full name" required class="w-full pl-11 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            </div>
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+                                Capture ID Card via Camera
+                            </label>
+                            <div id="camera-dropzone" class="relative border-2 border-dashed border-slate-700 rounded-2xl bg-slate-900/40 min-h-[220px] flex flex-col items-center justify-center p-4 text-center overflow-hidden">
+                                <div id="camera-prompt" class="space-y-3 flex flex-col items-center">
+                                    <div class="w-14 h-14 rounded-full bg-blue-950/60 text-blue-400 flex items-center justify-center">
+                                        <i data-lucide="camera" class="w-7 h-7"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm font-medium">Position your ID card in front of camera</p>
+                                        <p class="text-xs text-slate-400 mt-1">Direct live snapshot photo required</p>
+                                    </div>
+                                    <button type="button" onclick="startCamera()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-md flex items-center space-x-1.5">
+                                        <i data-lucide="video" class="w-4 h-4"></i>
+                                        <span>Start Camera</span>
+                                    </button>
+                                </div>
+
+                                <div id="camera-feed-container" class="hidden relative w-full h-full flex flex-col items-center">
+                                    <video id="webcam-video" autoplay playsinline class="w-full h-48 object-cover rounded-xl border border-slate-700 bg-black"></video>
+                                    <div class="flex items-center space-x-2 mt-3">
+                                        <button type="button" onclick="capturePhoto()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5">
+                                            <i data-lucide="aperture" class="w-4 h-4"></i>
+                                            <span>Take Photo</span>
+                                        </button>
+                                        <button type="button" onclick="stopCamera()" class="px-3 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-medium">Cancel</button>
+                                    </div>
+                                </div>
+
+                                <div id="preview-container" class="hidden relative w-full h-full flex flex-col items-center">
+                                    <img id="preview-image" src="" alt="Captured ID Preview" class="w-full h-44 object-cover rounded-xl border border-slate-700 shadow-sm" />
+                                    <div class="flex items-center justify-between w-full mt-2.5 px-1">
+                                        <span id="file-name" class="text-xs font-medium text-slate-300 truncate max-w-[180px]">captured_id.png</span>
+                                        <button type="button" onclick="retakePhoto()" class="text-xs text-rose-500 font-medium flex items-center space-x-1">
+                                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                                            <span>Retake</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" id="submit-btn" class="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-lg flex items-center justify-center space-x-2">
+                            <i data-lucide="lock" class="w-4 h-4"></i>
+                            <span>Authenticate & Login</span>
+                        </button>
+                    </form>
+                </div>
+
+                <!-- SCANNING VIEW -->
+                <div id="scanning-view" class="hidden p-8 flex flex-col items-center justify-center space-y-6 text-center">
+                    <div class="relative w-full max-w-xs h-48 bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 flex items-center justify-center">
+                        <div class="animate-scan-line"></div>
+                        <img id="scanning-img-preview" src="" alt="Scanning Target" class="w-full h-full object-cover opacity-60" />
+                    </div>
+                    <div class="space-y-2">
+                        <h3 class="text-lg font-bold">Verifying Auth Credentials</h3>
+                        <p id="scan-step-text" class="text-xs text-slate-400 h-6 flex items-center justify-center">
+                            Extracting credentials...
+                        </p>
+                    </div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                        <div id="scan-progress-bar" class="bg-blue-600 h-full w-0 transition-all duration-300"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://dlkhumirnoptiwfqhvmx.supabase.co';
+        const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_sm8zBumIkn4D7zsHse13Yw_Gzr00Cep';
+        const supabaseClient = (typeof supabase !== 'undefined') ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : null;
+
+        let uploadedFileData = null;
+        let cameraStream = null;
+
+        window.addEventListener('load', () => {
+            if (window.lucide) lucide.createIcons();
+            // Redirect if already logged in
+            if (sessionStorage.getItem('chitragupta_user')) {
+                window.location.href = 'dashboard.html';
+            }
+        });
+
+        async function startCamera() {
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+                document.getElementById('webcam-video').srcObject = cameraStream;
+                document.getElementById('camera-prompt').classList.add('hidden');
+                document.getElementById('camera-feed-container').classList.remove('hidden');
+            } catch (err) { alert("Camera access denied."); }
+        }
+
+        function stopCamera() {
+            if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+            document.getElementById('camera-feed-container').classList.add('hidden');
+            if (!uploadedFileData) document.getElementById('camera-prompt').classList.remove('hidden');
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('webcam-video');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            uploadedFileData = canvas.toDataURL('image/png');
+            document.getElementById('preview-image').src = uploadedFileData;
+            stopCamera();
+            document.getElementById('camera-prompt').classList.add('hidden');
+            document.getElementById('preview-container').classList.remove('hidden');
+            if (window.lucide) lucide.createIcons();
+        }
+
+        function retakePhoto() {
+            uploadedFileData = null;
+            document.getElementById('preview-container').classList.add('hidden');
+            startCamera();
+        }
+
+        function handleLoginSubmit(e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value.trim();
+            if (!username || !uploadedFileData) {
+                alert('Please provide Username and Capture ID Photo.');
+                return;
+            }
+            document.getElementById('login-view').classList.add('hidden');
+            document.getElementById('scanning-view').classList.remove('hidden');
+            document.getElementById('scanning-img-preview').src = uploadedFileData;
+
+            let progress = 0;
+            const bar = document.getElementById('scan-progress-bar');
+            const interval = setInterval(() => {
+                progress += 25;
+                bar.style.width = progress + '%';
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    // Store Session Data
+                    sessionStorage.setItem('chitragupta_user', username);
+                    document.getElementById('corner-verified-badge').classList.remove('hidden');
+                    setTimeout(() => {
+                        window.location.href = 'dashboard.html';
+                    }, 800);
+                }
+            }, 300);
+        }
+    </script>
+</body>
+</html>
