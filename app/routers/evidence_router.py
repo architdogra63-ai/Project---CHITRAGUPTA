@@ -123,6 +123,100 @@ def list_evidence(
     ]
 
 
+@router.delete("/{case_id}/evidence-unused")
+def remove_unused_evidence(
+    case_id: str,
+    user: dict = Depends(require_roles("police", "forensic", "admin")),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict:
+    """Purge unused/inactive evidence (tampered, quarantined, failed) from a case."""
+    case_row = conn.execute("SELECT case_id FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+    if not case_row:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    rows = conn.execute(
+        """
+        SELECT file_id, original_filename, status
+        FROM evidence_files
+        WHERE case_id = ? AND status IN ('quarantined', 'tampered', 'failed')
+        """,
+        (case_id,),
+    ).fetchall()
+
+    removed_files = [
+        {"file_id": r["file_id"], "filename": r["original_filename"], "status": r["status"]}
+        for r in rows
+    ]
+
+    if removed_files:
+        conn.execute(
+            """
+            DELETE FROM evidence_files
+            WHERE case_id = ? AND status IN ('quarantined', 'tampered', 'failed')
+            """,
+            (case_id,),
+        )
+        conn.commit()
+
+        for f in removed_files:
+            write_audit(
+                conn=conn,
+                user_id=user["user_id"],
+                action="remove_evidence",
+                result="ok",
+                file_id=f["file_id"],
+                case_id=case_id,
+                detail=f"purged unused evidence {f['file_id']} ({f['filename']}) from case",
+            )
+
+    return {
+        "deleted_count": len(removed_files),
+        "removed_files": removed_files,
+        "message": f"Successfully removed {len(removed_files)} unused evidence file(s)",
+    }
+
+
+@router.delete("/{case_id}/evidence/{file_id}")
+def remove_evidence(
+    case_id: str,
+    file_id: str,
+    user: dict = Depends(require_roles("police", "forensic", "admin")),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict:
+    """Remove a specific evidence file from a case."""
+    row = conn.execute(
+        "SELECT file_id, original_filename, stored_path FROM evidence_files WHERE case_id = ? AND file_id = ?",
+        (case_id, file_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Evidence {file_id} not found in case {case_id}")
+
+    filename = row["original_filename"]
+
+    conn.execute(
+        "DELETE FROM evidence_files WHERE case_id = ? AND file_id = ?",
+        (case_id, file_id),
+    )
+    conn.commit()
+
+    write_audit(
+        conn=conn,
+        user_id=user["user_id"],
+        action="remove_evidence",
+        result="ok",
+        file_id=file_id,
+        case_id=case_id,
+        detail=f"evidence {file_id} ({filename}) removed from case",
+    )
+
+    return {
+        "deleted": True,
+        "file_id": file_id,
+        "filename": filename,
+        "message": f"Evidence {file_id} removed from case",
+    }
+
+
 # Separate router for evidence by file_id (not nested under cases)
 evidence_router = APIRouter(prefix="/evidence", tags=["evidence"])
 

@@ -24,13 +24,20 @@ CONFLICT_TYPES = ("time", "place", "people", "amount", "count")
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
-    """Parse ISO 8601 timestamp; return None if invalid."""
+    """Parse ISO 8601 timestamp; return None if invalid.
+    Always returns a timezone-aware UTC datetime to allow subtraction.
+    """
     if not ts:
         return None
     try:
         # Handle Z suffix
         ts = ts.replace("Z", "+00:00")
-        return datetime.fromisoformat(ts)
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
     except (ValueError, TypeError):
         return None
 

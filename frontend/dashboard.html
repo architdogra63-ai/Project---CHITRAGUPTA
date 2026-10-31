@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
 
     <style>
         :root {
@@ -197,6 +198,9 @@
             <div class="agents" id="agents-bar">
                 <!-- Populated via JS -->
             </div>
+            <div class="agents" style="border-bottom:0;padding:0 0 12px;margin-bottom:12px;">
+                <div id="model-status-pill" class="ag wait" title="LLM / Ollama model status"><i class="dot"></i><span>LLM Checking...</span></div>
+            </div>
 
             <!-- View 1: Evidence Workspace -->
             <section class="view-content on" id="v-ev">
@@ -247,8 +251,13 @@
                 <h1 class="text-2xl font-black mb-1">Connection Network (Neo4j View)</h1>
                 <p class="text-xs text-slate-400 mb-4">Select any node to view underlying records stored in PostgreSQL.</p>
                 <div class="graph">
-                    <div class="gbox">
-                        <svg id="network-svg" viewBox="0 0 620 400" width="100%" class="w-full h-auto" role="img"></svg>
+                    <div class="gbox relative">
+                        <div class="absolute top-2 right-2 z-10 flex text-[11px] font-bold">
+                            <button id="gm-3d" onclick="setGraphMode('3d')" class="px-3 py-1 bg-blue-600 text-white">3D</button>
+                            <button id="gm-2d" onclick="setGraphMode('2d')" class="px-3 py-1 bg-[#1e1e1e] text-slate-400">2D</button>
+                        </div>
+                        <div id="network-3d" style="height:460px;width:100%;"></div>
+                        <svg id="network-svg" viewBox="0 0 620 400" width="100%" class="w-full h-auto hidden" role="img"></svg>
                     </div>
                     <div class="card" id="graph-side-panel">
                         <b class="text-sm text-white block mb-1">No node selected</b>
@@ -324,139 +333,252 @@
 
     <!-- JAVASCRIPT APP LOGIC -->
     <script>
-        // Check Session Authentication
-        const savedUser = sessionStorage.getItem('chitragupta_user') || "AGRIM JAIN";
+        // ── Session ──────────────────────────────────────────────────────────────
+        const savedUser  = sessionStorage.getItem('chitragupta_user')  || 'AGRIM JAIN';
+        const authToken  = sessionStorage.getItem('chitragupta_token') || null;
+        let ACTIVE_CASE_ID = sessionStorage.getItem('chitragupta_case_id') || null;
 
-        // Agent Team
-        const agentsList = [
-            ["Case Coordinator", "on"],
-            ["Intake & Safety", "on"],
-            ["Custody", "on"],
-            ["Extraction", "on"],
-            ["Timeline & Claims", "wait"],
-            ["Contradiction Investigator", "on"],
-            ["Skeptic", "on"],
-            ["Network", "wait"],
-            ["Report", "wait"]
-        ];
+        // ── API helpers ──────────────────────────────────────────────────────────
+        function apiHeaders() {
+            const h = { 'Content-Type': 'application/json' };
+            if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+            return h;
+        }
 
-        // Audit Log Items
-        const auditLog = [
-            ["09:10:02", "Intake & Safety", "Scanned 6 files: clean"],
-            ["09:10:40", "Custody", "Sealed all files, hash chain extended"],
-            ["09:31:15", "Extraction", "OCR confidence 61% on lab_report.pdf p.4, retried with new settings"],
-            ["09:33:50", "Custody", "cdr_phone_9812.csv failed hash check, access blocked"],
-            ["09:33:52", "Case Coordinator", "Replanned: excluded CDR, re-ran contradiction checks"],
-            ["09:36:10", "Skeptic", "Challenged 4 flags, kept 3, dropped 1 (clock offset explains it)"]
-        ];
+        async function apiFetch(path, opts = {}) {
+            const res = await fetch(path, { headers: apiHeaders(), cache: 'no-store', ...opts });
+            if (!res.ok) throw new Error(`HTTP ${res.status}: ${path}`);
+            return res.json();
+        }
 
-        window.addEventListener('load', () => {
+        // Resolve the active case id (try /cases/active, then list)
+        async function resolveActiveCaseId() {
+            if (ACTIVE_CASE_ID) return ACTIVE_CASE_ID;
+            try {
+                const d = await apiFetch('/cases/active');
+                ACTIVE_CASE_ID = d.case_id;
+            } catch (_) {
+                try {
+                    const d = await apiFetch('/cases');
+                    const list = d.cases || d;
+                    if (Array.isArray(list) && list.length)
+                        ACTIVE_CASE_ID = list[list.length - 1].case_id;
+                } catch (_2) {}
+            }
+            if (ACTIVE_CASE_ID)
+                sessionStorage.setItem('chitragupta_case_id', ACTIVE_CASE_ID);
+            return ACTIVE_CASE_ID;
+        }
+
+        // ── Boot ─────────────────────────────────────────────────────────────────
+        window.addEventListener('load', async () => {
             document.getElementById('uname').textContent = savedUser.toUpperCase();
             document.getElementById('workspace-welcome-name').textContent = savedUser;
-
             if (window.lucide) lucide.createIcons();
             document.getElementById('evidence-file-input').addEventListener('change', renderSelectedEvidenceFiles);
-            renderAgentBar();
-            renderTimeline('utc');
-            renderFlagsFeed();
-            renderNetworkGraph();
-            renderAuditLog();
+
+            await resolveActiveCaseId();
+
+            if (ACTIVE_CASE_ID) {
+                const pill = document.querySelector('.case-pill span');
+                if (pill) pill.textContent = `ACTIVE CASE · ${ACTIVE_CASE_ID}`;
+                document.querySelectorAll('.case-pill-id').forEach(el => el.textContent = ACTIVE_CASE_ID);
+            }
+
+            // Initial data load
+            await Promise.all([
+                refreshAgentBar(),
+                refreshTimeline('utc'),
+                refreshFlagsFeed(),
+                refreshNetworkGraph(),
+                refreshAuditLog(),
+            ]);
+
+            // Poll agents + LLM status every 8 seconds
+            setInterval(refreshAgentBar, 8000);
         });
 
+        // ── File picker ──────────────────────────────────────────────────────────
         function renderSelectedEvidenceFiles(event) {
             const list = document.getElementById('selected-evidence-files');
             const files = Array.from(event.target.files || []);
             list.replaceChildren();
-
-            if (files.length === 0) {
-                list.classList.add('hidden');
-                return;
-            }
-
+            if (!files.length) { list.classList.add('hidden'); return; }
             files.forEach(file => {
                 const item = document.createElement('li');
                 item.className = 'flex items-center justify-between gap-4 py-2';
-
                 const name = document.createElement('span');
                 name.className = 'truncate';
                 name.textContent = file.name;
-
                 const size = document.createElement('span');
                 size.className = 'shrink-0 text-xs text-slate-500';
                 size.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
-
                 item.append(name, size);
                 list.append(item);
             });
-
             list.classList.remove('hidden');
         }
 
         function handleLogout() {
             sessionStorage.removeItem('chitragupta_user');
+            sessionStorage.removeItem('chitragupta_token');
+            sessionStorage.removeItem('chitragupta_case_id');
             window.location.href = 'index.html';
         }
 
-        // Dashboard Navigation
+        // ── Nav ──────────────────────────────────────────────────────────────────
         function switchNavTab(viewKey) {
             document.querySelectorAll('.nav-btn').forEach(btn => {
                 btn.setAttribute('aria-current', btn.dataset.v === viewKey);
             });
-
             document.querySelectorAll('.view-content').forEach(view => {
                 view.classList.toggle('on', view.id === `v-${viewKey}`);
             });
-
             if (window.lucide) lucide.createIcons();
+            if (viewKey === 'gr') setGraphMode(graphMode);
         }
 
-        // Render Functions
-        function renderAgentBar() {
-            document.getElementById('agents-bar').innerHTML = agentsList.map(a => `
-                <div class="ag ${a[1]}">
-                    <i class="dot"></i>
-                    <span>${a[0]}</span>
-                </div>
-            `).join('');
+        // ── Agent status bar ─────────────────────────────────────────────────────
+        // Fallback static list shown if API is unreachable
+        const _agentsStatic = [
+            ["Case Coordinator", "on", "Online & Ready"],
+            ["Custody",          "on", "Online & Ready"],
+            ["Extractor",        "on", "Online & Ready"],
+            ["Claims Builder",   "wait", "Standby"],
+            ["Contradiction Detector", "on", "Online & Ready"],
+            ["Skeptic",          "on", "Online & Ready"],
+            ["Network Analyst",  "wait", "Standby"],
+            ["Report Agent",     "wait", "Standby"],
+            ["Vault Sync",       "on", "Online & Ready"],
+        ];
+
+        function _agentDotClass(status) {
+            if (status === 'on')   return 'on';
+            if (status === 'done') return 'on';
+            if (status === 'err')  return 'wait';
+            return 'wait';
         }
 
-        const eventsList = [
-            ["09:41:10", "09:41:10 IST", "Cash withdrawn at Sector 21 ATM", "atm_logs_oct.csv"],
+        function _renderAgentBar(agentRows) {
+            document.getElementById('agents-bar').innerHTML = agentRows.map(a => {
+                const cls = _agentDotClass(a[1]);
+                const detail = a[2] || '';
+                return `<div class="ag ${cls}" title="${detail}"><i class="dot"></i><span>${a[0]}</span></div>`;
+            }).join('');
+        }
+
+        // Model status pill
+        function _updateModelStatus(online, modelName) {
+            let pill = document.getElementById('model-status-pill');
+            if (!pill) return;
+            if (online) {
+                pill.className = 'ag on';
+                pill.innerHTML = `<i class="dot"></i><span>${modelName || 'LLM'} Online</span>`;
+            } else {
+                pill.className = 'ag wait';
+                pill.innerHTML = `<i class="dot" style="background:var(--red)"></i><span>${modelName || 'LLM'} Offline</span>`;
+            }
+        }
+
+        async function refreshAgentBar() {
+            // 1. Check LLM health
+            try {
+                const llm = await apiFetch('/health/llm');
+                _updateModelStatus(llm.online, llm.model);
+            } catch (_) {}
+
+            // 2. Fetch live agent statuses
+            if (!ACTIVE_CASE_ID) { _renderAgentBar(_agentsStatic); return; }
+            try {
+                const data = await apiFetch(`/cases/${ACTIVE_CASE_ID}/agents`);
+                const rows = data.agents || _agentsStatic;
+                _renderAgentBar(rows);
+
+                // Update model pill from agent data if present
+                if (typeof data.model_online !== 'undefined') {
+                    _updateModelStatus(data.model_online, data.model);
+                }
+            } catch (_) {
+                _renderAgentBar(_agentsStatic);
+            }
+        }
+
+        // ── Timeline ─────────────────────────────────────────────────────────────
+        // Fallback static events
+        const _eventsStatic = [
+            ["09:41:10", "09:41:10 IST", "Cash withdrawn at Sector 21 ATM", "atm_logs_oct.csv", false],
             ["09:44:00", "09:44:00 IST", "Phone 9812 pings Tower KR-14 (Karol Bagh)", "cdr_phone_9812.csv", true],
             ["09:48:25", "15:18:25 CCTV", "Suspect seen at Gate 4, Sector 18", "cctv_gate4.mp4", true],
             ["10:05:00", "10:05 hrs", "Witness says suspect left before 09:30", "witness_stmt_02.pdf", true],
-            ["10:20:42", "10:20:42 IST", "₹4.9L moved to account …771", "bank_stmt_acc771.xlsx"]
+            ["10:20:42", "10:20:42 IST", "₹4.9L moved to account …771", "bank_stmt_acc771.xlsx", false]
         ];
 
-        function renderTimeline(mode = 'utc') {
-            document.getElementById('timeline-list').innerHTML = eventsList.map(e => `
-                <div class="ev ${e[4] ? 'c' : ''}">
-                    <time class="mono text-emerald-400 font-bold">${mode === 'utc' ? e[0] + ' UTC' : e[1]}</time>
-                    ${mode === 'utc' ? `<span class="mono text-slate-500 text-xs ml-1">(${e[1]})</span>` : ''}
-                    <div class="text-sm font-semibold text-white mt-0.5">${e[2]}</div>
-                    <div class="text-xs text-slate-400">Source: ${e[3]}</div>
-                </div>
-            `).join('');
+        let _timelineMode = 'utc';
+        let _timelineEvents = null; // cached from API
+
+        function _renderTimelineDOM(events, mode) {
+            document.getElementById('timeline-list').innerHTML = events.length
+                ? events.map(e => `
+                    <div class="ev ${e[4] ? 'c' : ''}">
+                        <time class="mono text-emerald-400 font-bold">${mode === 'utc' ? e[0] + ' UTC' : e[1]}</time>
+                        ${mode === 'utc' ? `<span class="mono text-slate-500 text-xs ml-1">(${e[1]})</span>` : ''}
+                        <div class="text-sm font-semibold text-white mt-0.5">${e[2]}</div>
+                        <div class="text-xs text-slate-400">Source: ${e[3]}</div>
+                    </div>`).join('')
+                : '<p class="text-slate-500 text-xs">No timeline events yet. Run analysis to populate.</p>';
         }
+
+        async function refreshTimeline(mode) {
+            if (mode) _timelineMode = mode;
+            if (!ACTIVE_CASE_ID) { _renderTimelineDOM(_eventsStatic, _timelineMode); return; }
+            try {
+                const data = await apiFetch(`/cases/${ACTIVE_CASE_ID}/timeline`);
+                const raw = data.events || [];
+                // Backend returns [utc_time, raw_time, text, source, has_conflict]
+                _timelineEvents = raw.map(e => [e[0], e[1], e[2], e[3], !!e[4]]);
+                if (!_timelineEvents.length) _timelineEvents = _eventsStatic;
+            } catch (_) {
+                if (!_timelineEvents) _timelineEvents = _eventsStatic;
+            }
+            _renderTimelineDOM(_timelineEvents, _timelineMode);
+        }
+
+        function renderTimeline(mode) { refreshTimeline(mode); }
 
         function toggleTimelineFormat(mode) {
-            document.getElementById('tz-utc').className = mode === 'utc' ? 'px-3 py-1 text-xs font-bold bg-blue-600 text-white rounded-none' : 'px-3 py-1 text-xs font-bold text-slate-400 hover:text-white';
-            document.getElementById('tz-raw').className = mode === 'raw' ? 'px-3 py-1 text-xs font-bold bg-blue-600 text-white rounded-none' : 'px-3 py-1 text-xs font-bold text-slate-400 hover:text-white';
-            renderTimeline(mode);
+            document.getElementById('tz-utc').className = mode === 'utc'
+                ? 'px-3 py-1 text-xs font-bold bg-blue-600 text-white rounded-none'
+                : 'px-3 py-1 text-xs font-bold text-slate-400 hover:text-white';
+            document.getElementById('tz-raw').className = mode === 'raw'
+                ? 'px-3 py-1 text-xs font-bold bg-blue-600 text-white rounded-none'
+                : 'px-3 py-1 text-xs font-bold text-slate-400 hover:text-white';
+            _renderTimelineDOM(_timelineEvents || _eventsStatic, mode);
+            _timelineMode = mode;
         }
 
-        const flagsData = [
-            ["Location mismatch: ATM vs CCTV", "Cash withdrawn at Sector 21 at 09:41, but CCTV shows the suspect at Sector 18 at 09:48. The two places are 14 km apart.", "The CCTV clock runs 7 minutes behind the ATM clock, but 7 minutes does not close a 14 km gap. Likely a real conflict.", "cctv_gate4.mp4 @ 00:12:40", "atm_logs_oct.csv row 318"],
-            ["Phone location vs witness", "Phone 9812 pinged Karol Bagh at 09:44. The witness says the suspect had left the area by 09:30.", "Tower pings can drift up to 2 km. Karol Bagh is outside that range of the stated route. Flag kept.", "cdr_phone_9812.csv (blocked)", "witness_stmt_02.pdf p.2"],
-            ["Transfer amount mismatch", "Bank statement shows ₹4.9L moved, lab report lists a seized ledger with ₹4.2L.", "OCR read “4.2” at 61% confidence. Re-read with new settings gave “4.9”. Likely a false alarm.", "bank_stmt_acc771.xlsx row 55", "lab_report.pdf p.4"]
+        // ── Contradictions / Skeptic feed ────────────────────────────────────────
+        const _flagsStatic = [
+            ["Location mismatch: ATM vs CCTV", "Cash withdrawn at Sector 21 at 09:41, but CCTV shows the suspect at Sector 18 at 09:48. The two places are 14 km apart.", "The CCTV clock runs 7 minutes behind the ATM clock, but 7 minutes does not close a 14 km gap. Likely a real conflict.", "cctv_gate4.mp4 @ 00:12:40", "atm_logs_oct.csv row 318", null],
+            ["Phone location vs witness", "Phone 9812 pinged Karol Bagh at 09:44. The witness says the suspect had left the area by 09:30.", "Tower pings can drift up to 2 km. Karol Bagh is outside that range of the stated route. Flag kept.", "cdr_phone_9812.csv (blocked)", "witness_stmt_02.pdf p.2", null],
+            ["Transfer amount mismatch", "Bank statement shows ₹4.9L moved, lab report lists a seized ledger with ₹4.2L.", "OCR read '4.2' at 61% confidence. Re-read with new settings gave '4.9'. Likely a false alarm.", "bank_stmt_acc771.xlsx row 55", "lab_report.pdf p.4", null]
         ];
 
         let confirmCount = 0, dismissCount = 0;
+        let _liveFlags = null;  // cached flag array from API
 
-        function renderFlagsFeed() {
-            document.getElementById('flags-feed-container').innerHTML = flagsData.map((f, i) => `
+        function _renderFlagCard(f, i, flagId) {
+            const verdict = f[5];
+            const verdictBadge = verdict === 'survived'
+                ? `<span class="badge-custom" style="background:#3a1010;color:#ff4d5e;">⚑ Survived Review</span>`
+                : verdict === 'explained_away'
+                ? `<span class="badge-custom" style="background:#0c2010;color:#27e08a;">✓ Explained Away</span>`
+                : `<span class="badge-custom pend">Pending Review</span>`;
+            return `
                 <div class="card flag-item">
-                    <h3 class="text-sm font-bold text-white mb-1">${f[0]}</h3>
+                    <div class="flex items-start justify-between gap-2 mb-1">
+                        <h3 class="text-sm font-bold text-white">${f[0]}</h3>
+                        ${verdictBadge}
+                    </div>
                     <p class="text-xs text-slate-300 mb-2">${f[1]}</p>
                     <details class="text-xs border-t border-[#2a2a2a] pt-2 mt-2">
                         <summary class="text-blue-400 font-bold cursor-pointer">Skeptic Agent Reasoning</summary>
@@ -465,15 +587,44 @@
                     </details>
                     <textarea id="comment-${i}" placeholder="Reason for your decision (required)" class="w-full bg-[#1e1e1e] border border-[#2a2a2a] rounded-none p-2 text-xs text-white my-2 focus:outline-none focus:border-blue-500"></textarea>
                     <div class="flex items-center space-x-2">
-                        <button onclick="resolveFlag(${i}, 'Confirmed')" class="btn-custom g text-xs py-1.5 px-3">Confirm Flag</button>
-                        <button onclick="resolveFlag(${i}, 'Dismissed')" class="btn-custom o text-xs py-1.5 px-3">Dismiss Flag</button>
+                        <button onclick="resolveFlag(${i}, 'Confirmed', '${flagId || ''}')" class="btn-custom g text-xs py-1.5 px-3">Confirm Flag</button>
+                        <button onclick="resolveFlag(${i}, 'Dismissed', '${flagId || ''}')" class="btn-custom o text-xs py-1.5 px-3">Dismiss Flag</button>
                         <span id="res-${i}" class="text-xs font-mono font-bold ml-2"></span>
                     </div>
-                </div>
-            `).join('');
+                </div>`;
         }
 
-        function resolveFlag(index, status) {
+        async function refreshFlagsFeed() {
+            if (!ACTIVE_CASE_ID) { _liveFlags = null; renderFlagsFeed(); return; }
+            try {
+                const data = await apiFetch(`/cases/${ACTIVE_CASE_ID}/flags`);
+                const flags = data.flags || [];
+                _liveFlags = flags.map(f => [
+                    f.conflict_type || 'Unknown conflict',
+                    f.description || '',
+                    // Use skeptic verdict as "reasoning"
+                    f.skeptic_verdict
+                        ? `Skeptic verdict: ${f.skeptic_verdict}`
+                        : 'Awaiting skeptic review.',
+                    `Claim A: ${f.claim_a || 'n/a'}`,
+                    `Claim B: ${f.claim_b || 'n/a'}`,
+                    f.skeptic_verdict || null,
+                    f.flag_id || null,
+                ]);
+            } catch (_) {
+                _liveFlags = null;
+            }
+            renderFlagsFeed();
+        }
+
+        function renderFlagsFeed() {
+            const flagsData = _liveFlags && _liveFlags.length ? _liveFlags : _flagsStatic;
+            document.getElementById('flags-feed-container').innerHTML = flagsData.map((f, i) =>
+                _renderFlagCard(f, i, f[6] || null)
+            ).join('') || '<p class="text-slate-500 text-xs">No contradiction flags found yet. Run analysis to detect conflicts.</p>';
+        }
+
+        async function resolveFlag(index, status, flagId) {
             const commentBox = document.getElementById(`comment-${index}`);
             if (!commentBox.value.trim()) {
                 commentBox.classList.add('border-rose-500');
@@ -489,41 +640,153 @@
 
             const resLabel = document.getElementById(`res-${index}`);
             resLabel.textContent = `Decision: ${status}`;
-            resLabel.className = status === 'Confirmed' ? 'text-xs font-mono font-bold ml-2 text-rose-400' : 'text-xs font-mono font-bold ml-2 text-slate-400';
+            resLabel.className = status === 'Confirmed'
+                ? 'text-xs font-mono font-bold ml-2 text-rose-400'
+                : 'text-xs font-mono font-bold ml-2 text-slate-400';
+
+            // Persist to backend if we have a real flag_id
+            if (flagId && ACTIVE_CASE_ID) {
+                try {
+                    await apiFetch(`/cases/${ACTIVE_CASE_ID}/flags/${flagId}/review`, {
+                        method: 'POST',
+                        body: JSON.stringify({ decision: status.toLowerCase(), comment: commentBox.value.trim() }),
+                    });
+                } catch (_) { /* best-effort */ }
+            }
 
             showToast(`Investigator ${status} flag #${index + 1}`, 'success');
         }
 
-        // Graph Simulation
-        const nodes = [
-            ["Rakesh Malhotra", 300, 70, "p", 20, "Linked to 4 accounts. Appears in CDR and witness statement."],
-            ["Acc …771", 160, 150, "a", 22, "Receives 6 transfers. Statement: bank_stmt_acc771.xlsx"],
-            ["Acc …902", 100, 260, "a", 12, "Mule account. Statement: bank_stmt_acc902.csv"],
-            ["Acc …334", 230, 310, "a", 12, "Dormant until Oct 9."],
-            ["Phone 9812", 440, 150, "d", 17, "CDR: 214 calls. File blocked after tamper check."],
-            ["Sector 21 ATM", 500, 290, "l", 14, "Cash withdrawal 09:41."],
-            ["Gate 4, Sector 18", 360, 260, "l", 14, "CCTV sighting 09:48."],
-            ["Mobile IMEI …5530", 540, 60, "d", 12, "Seized device. Lab report p.4"]
+        // ── Network / Entity Graph ───────────────────────────────────────────────
+        let nodes = [
+            ["Rakesh Malhotra", 300, 70,  "p", 20, "Linked to 4 accounts. Appears in CDR and witness statement."],
+            ["Acc …771",        160, 150, "a", 22, "Receives 6 transfers. Statement: bank_stmt_acc771.xlsx"],
+            ["Acc …902",        100, 260, "a", 12, "Mule account. Statement: bank_stmt_acc902.csv"],
+            ["Acc …334",        230, 310, "a", 12, "Dormant until Oct 9."],
+            ["Phone 9812",      440, 150, "d", 17, "CDR: 214 calls. File blocked after tamper check."],
+            ["Sector 21 ATM",   500, 290, "l", 14, "Cash withdrawal 09:41."],
+            ["Gate 4, Sector 18",360,260,"l", 14, "CCTV sighting 09:48."],
+            ["Mobile IMEI …5530",540, 60,"d", 12, "Seized device. Lab report p.4"]
         ];
-
-        const edges = [[0,1],[0,4],[1,2],[1,3],[4,7],[0,7],[3,6],[5,6,1],[0,5]];
+        let edges = [[0,1],[0,4],[1,2],[1,3],[4,7],[0,7],[3,6],[5,6,1],[0,5]];
         const nodeColors = { p: "#3b8cff", a: "#27e08a", d: "#9b7bff", l: "#f2b84b" };
 
         function renderNetworkGraph() {
             const svg = document.getElementById('network-svg');
-            let linesHTML = edges.map(e => `
-                <line x1="${nodes[e[0]][1]}" y1="${nodes[e[0]][2]}" x2="${nodes[e[1]][1]}" y2="${nodes[e[1]][2]}"
-                      stroke="${e[2] ? '#ff4d5e' : '#1a2d4a'}" stroke-width="${e[2] ? 3 : 2}" ${e[2] ? 'stroke-dasharray="6 4"' : ''}/>
-            `).join('');
-
-            let nodesHTML = nodes.map((n, i) => `
-                <g class="node" onclick="pickNode(${i})">
+            const linesHTML = edges.map(e =>
+                `<line x1="${nodes[e[0]][1]}" y1="${nodes[e[0]][2]}" x2="${nodes[e[1]][1]}" y2="${nodes[e[1]][2]}"
+                      stroke="${e[2] ? '#ff4d5e' : '#1a2d4a'}" stroke-width="${e[2] ? 3 : 2}" ${e[2] ? 'stroke-dasharray="6 4"' : ''}/>`
+            ).join('');
+            const nodesHTML = nodes.map((n, i) =>
+                `<g class="node" onclick="pickNode(${i})">
                     <circle cx="${n[1]}" cy="${n[2]}" r="${n[4]}" fill="${nodeColors[n[3]]}" fill-opacity="0.85" ${n[4] >= 20 ? 'stroke="#fff" stroke-width="2"' : ''}/>
                     <text x="${n[1]}" y="${n[2] + n[4] + 14}" text-anchor="middle">${n[0]}</text>
-                </g>
-            `).join('');
-
+                </g>`
+            ).join('');
             svg.innerHTML = linesHTML + nodesHTML;
+        }
+
+        // ── 3D graph ─────────────────────────────────────────────────────────────
+        let graph3D = null, graphMode = '3d';
+
+        function setGraphMode(mode) {
+            graphMode = (mode === '3d' && typeof ForceGraph3D !== 'undefined') ? '3d' : '2d';
+            const el  = document.getElementById('network-3d');
+            const svg = document.getElementById('network-svg');
+            el.classList.toggle('hidden', graphMode !== '3d');
+            svg.classList.toggle('hidden', graphMode !== '2d');
+            document.getElementById('gm-3d').className = 'px-3 py-1 ' + (graphMode === '3d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+            document.getElementById('gm-2d').className = 'px-3 py-1 ' + (graphMode === '2d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+            if (graphMode === '3d') render3DGraph();
+        }
+
+        function render3DGraph() {
+            const el = document.getElementById('network-3d');
+            const data = {
+                nodes: nodes.map((n, i) => ({ id: i, name: n[0], type: n[3], val: n[4] })),
+                links: edges.map((e, i) => ({ source: e[0], target: e[1], conflict: !!e[2], label: edgeLabels[i] || '' }))
+            };
+            if (!graph3D) {
+                graph3D = ForceGraph3D()(el)
+                    .backgroundColor('#0b0f14')
+                    .nodeLabel('name')
+                    .nodeColor(n => nodeColors[n.type])
+                    .nodeVal(n => n.val / 4)
+                    .nodeOpacity(0.92)
+                    .nodeResolution(20)
+                    .linkColor(l => l.conflict ? '#ff4d5e' : '#3b5f8f')
+                    .linkWidth(l => l.conflict ? 2.5 : 1)
+                    .linkOpacity(0.7)
+                    .linkLabel('label')
+                    .linkDirectionalParticles(l => l.conflict ? 4 : 0)
+                    .linkDirectionalParticleWidth(2)
+                    .onNodeClick(n => {
+                        pickNode(n.id);
+                        const d = 90, r = 1 + d / Math.hypot(n.x, n.y, n.z);
+                        graph3D.cameraPosition({ x: n.x * r, y: n.y * r, z: n.z * r }, n, 900);
+                    });
+            }
+            graph3D.width(el.clientWidth).height(460).graphData(data);
+        }
+
+        window.addEventListener('resize', () => {
+            if (graph3D && graphMode === '3d') graph3D.width(document.getElementById('network-3d').clientWidth);
+        });
+
+        // ── Graph data from LIVE backend ─────────────────────────────────────────
+        // Backend /cases/{id}/graph returns { nodes:[{id,label,type,...}], edges:[{source,target,...}] }
+        const typeMap = { person: 'p', account: 'a', device: 'd', phone: 'd', location: 'l', place: 'l', unknown: 'p' };
+        let edgeLabels = [];
+
+        function applyGraphJSON(g) {
+            if (!g || !Array.isArray(g.nodes) || !Array.isArray(g.edges) || !g.nodes.length) return false;
+            const idx = {}, deg = {};
+            g.edges.forEach(e => {
+                deg[e.source] = (deg[e.source] || 0) + 1;
+                deg[e.target] = (deg[e.target] || 0) + 1;
+            });
+            const N = g.nodes.length;
+            nodes = g.nodes.map((n, i) => {
+                idx[n.id] = i;
+                const ang = 2 * Math.PI * i / N;
+                return [
+                    n.label || String(n.id),
+                    310 + 250 * Math.cos(ang), 200 + 150 * Math.sin(ang),
+                    typeMap[String(n.type || '').toLowerCase()] || 'p',
+                    n.size || 10 + Math.min((deg[n.id] || 0) * 3, 14),
+                    n.description || n.desc || `Suspiciousness: ${n.suspiciousness ?? 'n/a'}`
+                ];
+            });
+            const valid = g.edges.filter(e => idx[e.source] !== undefined && idx[e.target] !== undefined);
+            edges = valid.map(e => {
+                const r = [idx[e.source], idx[e.target]];
+                if (e.conflict || /conflict/i.test(e.label || '')) r.push(1);
+                return r;
+            });
+            edgeLabels = valid.map(e => e.label || '');
+            return true;
+        }
+
+        async function refreshNetworkGraph() {
+            if (!ACTIVE_CASE_ID) { renderNetworkGraph(); setGraphMode(graphMode); return; }
+            try {
+                const g = await apiFetch(`/cases/${ACTIVE_CASE_ID}/graph`);
+                if (applyGraphJSON(g)) {
+                    renderNetworkGraph();
+                    if (graph3D) render3DGraph();
+                    else if (graphMode === '3d') render3DGraph();
+                }
+            } catch (_) {
+                // Keep demo data; still render
+                renderNetworkGraph();
+            }
+            // Also try local graph.json as a secondary fallback
+            if (!nodes.length) {
+                try {
+                    const r = await fetch('graph.json', { cache: 'no-store' });
+                    if (r.ok) { const g = await r.json(); if (applyGraphJSON(g)) renderNetworkGraph(); }
+                } catch (_) {}
+            }
         }
 
         function pickNode(index) {
@@ -531,20 +794,46 @@
             document.getElementById('graph-side-panel').innerHTML = `
                 <b class="text-sm text-white block mb-1">${n[0]}</b>
                 <p class="text-xs text-slate-300 mb-2">${n[5]}</p>
-                <div class="text-[11px] font-mono text-emerald-400">Records in PostgreSQL: ${n[4] > 15 ? 4 : 2}</div>
-            `;
+                <div class="text-[11px] font-mono text-emerald-400">Connections: ${n[4] > 15 ? 4 : 2}</div>`;
         }
 
-        function renderAuditLog() {
-            document.getElementById('audit-log-rows').innerHTML = auditLog.map(l => `
+        // ── Audit trail ───────────────────────────────────────────────────────────
+        const _auditStatic = [
+            ["09:10:02", "Intake & Safety",    "Scanned 6 files: clean"],
+            ["09:10:40", "Custody",            "Sealed all files, hash chain extended"],
+            ["09:31:15", "Extraction",         "OCR confidence 61% on lab_report.pdf p.4, retried with new settings"],
+            ["09:33:50", "Custody",            "cdr_phone_9812.csv failed hash check, access blocked"],
+            ["09:33:52", "Case Coordinator",   "Replanned: excluded CDR, re-ran contradiction checks"],
+            ["09:36:10", "Skeptic",            "Challenged 4 flags, kept 3, dropped 1 (clock offset explains it)"]
+        ];
+
+        function _renderAuditRows(rows) {
+            document.getElementById('audit-log-rows').innerHTML = rows.map(l => `
                 <tr>
                     <td class="p-3 mono text-slate-400">${l[0]}</td>
                     <td class="p-3 text-slate-300 font-semibold">${l[1]}</td>
                     <td class="p-3 text-slate-200">${l[2]}</td>
-                </tr>
-            `).join('');
+                </tr>`).join('');
         }
 
+        async function refreshAuditLog() {
+            if (!ACTIVE_CASE_ID) { _renderAuditRows(_auditStatic); return; }
+            try {
+                const data = await apiFetch(`/cases/${ACTIVE_CASE_ID}/audit`);
+                const logs = data.logs || [];
+                if (logs.length) {
+                    _renderAuditRows(logs.map(l => [l[0], l[1], l[2]]));
+                } else {
+                    _renderAuditRows(_auditStatic);
+                }
+            } catch (_) {
+                _renderAuditRows(_auditStatic);
+            }
+        }
+
+        function renderAuditLog() { refreshAuditLog(); }
+
+        // ── Court Report ──────────────────────────────────────────────────────────
         function generateReportPDF() {
             document.getElementById('report-status-msg').textContent = "Compiling report...";
             setTimeout(() => {
@@ -553,10 +842,11 @@
             }, 600);
         }
 
+        // ── Toast ─────────────────────────────────────────────────────────────────
         function showToast(message, type = 'info') {
-            const toast = document.getElementById('toast');
+            const toast        = document.getElementById('toast');
             const toastMessage = document.getElementById('toast-message');
-            const toastIcon = document.getElementById('toast-icon');
+            const toastIcon    = document.getElementById('toast-icon');
 
             toastMessage.textContent = message;
 

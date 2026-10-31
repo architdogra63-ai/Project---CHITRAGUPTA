@@ -58,7 +58,7 @@ def get_settings() -> Settings:
     vault_autosync = os.getenv("VAULT_AUTOSYNC", "1") != "0"
     vault_poll_seconds = float(os.getenv("VAULT_POLL_SECONDS", "2"))
 
-    llm_base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+    llm_base_url = os.getenv("LLM_BASE_URL", "http://100.88.109.124:11434/v1")
     llm_api_key = os.getenv("LLM_API_KEY", "ollama")
     llm_model = os.getenv("LLM_MODEL", "")
     llm_timeout_seconds = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))

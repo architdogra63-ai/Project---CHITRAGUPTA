@@ -3,6 +3,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from .storage import ensure_dirs
 from .db import init_db
@@ -15,6 +17,7 @@ from .routers import (
     agent_router,
 )
 from .routers import vault_router
+from .routers import frontend_router
 from .vault.consumer import start_poller, stop_poller
 from .config import get_settings
 
@@ -52,6 +55,13 @@ app.include_router(ledger_router.router)
 app.include_router(admin_router.router)
 app.include_router(vault_router.router)
 app.include_router(agent_router.router)           # Phase 2: agent endpoints
+
+# Frontend routes must come LAST (catch-all for / and named pages)
+app.include_router(frontend_router.router)
+
+# Serve static files (bridge.js, etc.)
+_static_dir = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 @app.get("/health")

@@ -6,6 +6,7 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = Field(default="bearer")
     role: str
+    username: Optional[str] = None
 
 
 class CaseCreate(BaseModel):

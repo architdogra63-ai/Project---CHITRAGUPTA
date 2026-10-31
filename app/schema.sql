@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
   completed_at TEXT,
   started_by TEXT NOT NULL,
   error_detail TEXT,
-  result_json TEXT
+  result_json TEXT,
+  progress_detail TEXT
 );
 
 CREATE TABLE IF NOT EXISTS extractions (

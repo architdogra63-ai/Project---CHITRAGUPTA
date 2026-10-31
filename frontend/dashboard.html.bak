@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHITRAGUPTA - Autonomous Evidence Workspace</title>
+
+    <!-- Google Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
+
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #000000;
+            --panel: #121212;
+            --panel2: #1e1e1e;
+            --line: #2a2a2a;
+            --text: #e3edf8;
+            --mute: #7f96b3;
+            --blue: #3b8cff;
+            --blue2: #123a73;
+            --green: #27e08a;
+            --green2: #0c3a28;
+            --red: #ff4d5e;
+            --amber: #f2b84b;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+        }
+
+        .mono {
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        button, select, textarea { font: inherit; color: inherit; }
+        button { cursor: pointer; }
+        :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+        /* App Layout */
+        .app-container { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 100vh; }
+        aside { background: linear-gradient(180deg, #151a22, var(--panel)); border-right: 1px solid var(--line); padding: 22px 14px; display: flex; flex-direction: column; gap: 5px; position: sticky; top: 0; height: 100vh; }
+        .brand { font-weight: 800; font-size: 20px; padding: 0 8px 2px; letter-spacing: -0.5px; }
+        .brand span { color: var(--green); }
+        .sub { color: var(--mute); font-size: 11px; padding: 0 8px 20px; }
+
+        .nav-btn { background: none; border: 0; text-align: left; padding: 11px 12px; border-radius: 9px; color: var(--mute); font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 10px; transition: all 0.2s; }
+        .nav-btn:hover { background: var(--panel2); color: var(--text); }
+        .nav-btn[aria-current=true] { background: linear-gradient(90deg, rgba(59,140,255,0.2), rgba(18,58,115,0.3)); color: #fff; box-shadow: inset 3px 0 0 var(--green); }
+
+        .who { margin-top: auto; padding: 16px 8px 4px; border-top: 1px solid var(--line); }
+        .who label { color: var(--mute); font-size: 11px; display: block; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        #dashboard-app-container > main { min-width: 0; padding: 28px clamp(18px, 3vw, 42px) 48px; max-width: 1600px; width: 100%; }
+        .workspace-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
+        .workspace-eyebrow { color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; }
+        .workspace-title { margin: 5px 0 4px; color: #fff; font-size: clamp(22px, 2.4vw, 30px); line-height: 1.2; font-weight: 800; letter-spacing: -0.7px; }
+        .workspace-copy { margin: 0; color: var(--mute); font-size: 12px; }
+        .case-pill { display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); font-size: 11px; font-weight: 700; white-space: nowrap; }
+        .case-pill i { color: var(--green); }
+
+        /* Agent Status Horizontal Scroll */
+        .agents { display: flex; gap: 8px; overflow-x: auto; padding: 0 0 18px; margin-bottom: 24px; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+        .agents::-webkit-scrollbar { display: none; }
+        .ag { flex: none; display: flex; align-items: center; gap: 7px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px; font-size: 11px; color: var(--mute); font-weight: 600; }
+        .ag i.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; }
+        .ag.on { color: var(--text); border-color: var(--green2); }
+        .ag.on i.dot { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.4s infinite; }
+        .ag.wait i.dot { background: var(--amber); }
+
+        @keyframes pulse { 50% { opacity: 0.5; } }
+
+        /* UI Cards & Buttons */
+        .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; transition: border-color 0.2s, transform 0.2s; }
+        .btn-custom { background: var(--blue); border: 0; border-radius: 9px; padding: 9px 14px; font-weight: 700; color: #fff; transition: opacity 0.2s, transform 0.2s; display: inline-flex; align-items: center; gap: 7px; }
+        .btn-custom:hover { opacity: 0.92; transform: translateY(-1px); }
+        .btn-custom.g { background: var(--green); color: #03150c; }
+        .btn-custom.o { background: none; border: 1px solid var(--line); color: var(--text); }
+
+        .badge-custom { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; font-family: ui-monospace, monospace; }
+        .pend { background: var(--blue2); color: var(--blue); }
+
+        /* Timeline View */
+        .tl { position: relative; margin-left: 8px; padding-left: 20px; border-left: 2px solid var(--blue2); }
+        .ev { position: relative; margin-bottom: 14px; }
+        .ev:before { content: ""; position: absolute; left: -25px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--blue); border: 1px solid var(--bg); }
+        .ev.c:before { background: var(--red); }
+
+        /* Graph SVG */
+        .graph { display: grid; grid-template-columns: 1fr 280px; gap: 12px; }
+        .gbox { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+        svg text { fill: var(--text); font-size: 11px; pointer-events: none; }
+        .node { cursor: pointer; }
+
+        .view-content { display: none; }
+        .view-content.on { display: block; }
+
+        #dashboard-app-container .card,
+        #dashboard-app-container .btn-custom,
+        #dashboard-app-container .gbox,
+        #dashboard-app-container table {
+            border-radius: 12px;
+        }
+
+        #dashboard-app-container .card:hover { border-color: #3a4b60; }
+
+        @media (max-width: 900px) {
+            .app-container { grid-template-columns: 210px minmax(0, 1fr); }
+            #dashboard-app-container > main { padding: 22px 18px 36px; }
+            .graph { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 700px) {
+            .app-container { grid-template-columns: minmax(0, 1fr); }
+            #dashboard-app-container aside { position: relative; top: auto; height: auto; padding: 14px; border-right: 0; border-bottom: 1px solid var(--line); flex-direction: row; flex-wrap: wrap; align-items: center; }
+            #dashboard-app-container .brand { flex: 1 1 100%; padding-bottom: 0; }
+            #dashboard-app-container .sub { display: none; }
+            #dashboard-app-container .nav-btn { flex: 1 1 145px; justify-content: flex-start; padding: 9px 10px; font-size: 12px; }
+            #dashboard-app-container .who { width: 100%; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 3px 10px; margin-top: 8px; padding: 10px 4px 0; }
+            #dashboard-app-container .who label { grid-column: 1 / -1; }
+            #dashboard-app-container .who button { grid-column: 1 / -1; margin-top: 6px; }
+            #dashboard-app-container > main { padding: 20px 14px 32px; }
+            .workspace-header { align-items: flex-start; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+            .agents { margin-bottom: 18px; }
+            .graph { gap: 10px; }
+        }
+    </style>
+</head>
+<body class="bg-black text-[#e3edf8] antialiased">
+
+    <!-- DASHBOARD WORKSPACE APP CONTAINER -->
+    <div id="dashboard-app-container" class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside>
+            <div class="brand">Chitragupta<span>.</span></div>
+            <div class="sub">Agents investigate. Humans decide.</div>
+
+            <button class="nav-btn" data-v="ev" aria-current="true" onclick="switchNavTab('ev')">
+                <i data-lucide="file-check" class="w-4 h-4"></i>
+                <span>Evidence Workspace</span>
+            </button>
+            <button class="nav-btn" data-v="tl" onclick="switchNavTab('tl')">
+                <i data-lucide="clock" class="w-4 h-4"></i>
+                <span>Timeline</span>
+            </button>
+            <button class="nav-btn" data-v="cf" onclick="switchNavTab('cf')">
+                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                <span>Contradictions</span>
+            </button>
+            <button class="nav-btn" data-v="gr" onclick="switchNavTab('gr')">
+                <i data-lucide="network" class="w-4 h-4"></i>
+                <span>Network Graph</span>
+            </button>
+            <button class="nav-btn" data-v="au" onclick="switchNavTab('au')">
+                <i data-lucide="history" class="w-4 h-4"></i>
+                <span>Audit Trail</span>
+            </button>
+            <button class="nav-btn" data-v="rp" onclick="switchNavTab('rp')">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                <span>Court Report</span>
+            </button>
+
+            <!-- User Session Box -->
+            <div class="who">
+                <label>Authenticated User</label>
+                <div id="uname" style="font-weight:800; font-size:14px; color:#fff;" class="truncate">AGRIM JAIN</div>
+                <div id="urole" class="badge-custom pend mt-1 mb-2">ADMINISTRATOR</div>
+
+                <button onclick="handleLogout()" class="w-full mt-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-none text-xs font-bold transition flex items-center justify-center space-x-1.5">
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                    <span>Sign Out</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Workspace Area -->
+        <main>
+            <header class="workspace-header">
+                <div>
+                    <div class="workspace-eyebrow">Chitragupta / Investigation workspace</div>
+                    <h1 class="workspace-title">Welcome back, <span id="workspace-welcome-name">Investigator</span></h1>
+                    <p class="workspace-copy">Review evidence, agent activity, and case decisions in one place.</p>
+                </div>
+                <div class="case-pill">
+                    <i data-lucide="shield-check" class="w-4 h-4"></i>
+                    <span>ACTIVE CASE · FIR-2026/0417</span>
+                </div>
+            </header>
+
+            <!-- Agent Activity Status Bar -->
+            <div class="agents" id="agents-bar">
+                <!-- Populated via JS -->
+            </div>
+
+            <!-- View 1: Evidence Workspace -->
+            <section class="view-content on" id="v-ev">
+                <div class="mb-5">
+                    <h1 class="text-2xl font-black">Evidence Workspace</h1>
+                    <p class="text-xs text-slate-400 mt-1">Case FIR-2026/0417 · Mule account ring</p>
+                </div>
+                <div class="card !p-6 sm:!p-10 text-center max-w-3xl mx-auto mb-5">
+                    <div class="w-14 h-14 mx-auto mb-4 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center">
+                        <i data-lucide="cloud-upload" class="w-7 h-7"></i>
+                    </div>
+                    <h2 class="text-lg font-bold text-white mb-2">Upload case documents</h2>
+                    <p class="text-sm text-slate-400 mb-5">Choose documents from your device to add them to this workspace.</p>
+                    <label for="evidence-file-input" class="btn-custom cursor-pointer">
+                        <i data-lucide="file-plus-2" class="w-4 h-4"></i>
+                        <span>Select documents</span>
+                    </label>
+                    <input id="evidence-file-input" type="file" class="sr-only" multiple accept=".pdf,.csv,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png,.mp4">
+                    <p class="text-xs text-slate-500 mt-4">PDF, spreadsheets, documents, images, or video</p>
+                    <ul id="selected-evidence-files" class="hidden mt-5 text-left text-sm text-slate-300 divide-y divide-[#2a2a2a]"></ul>
+                </div>
+            </section>
+
+            <!-- View 2: Timeline -->
+            <section class="view-content" id="v-tl">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h1 class="text-2xl font-black">Unified Timeline</h1>
+                        <p class="text-xs text-slate-400">Events aggregated across all verified evidence files in chronological order.</p>
+                    </div>
+                    <div class="inline-flex border border-[#2a2a2a] rounded-none overflow-hidden p-0.5 bg-[#121212]">
+                        <button id="tz-utc" onclick="toggleTimelineFormat('utc')" class="px-3 py-1 text-xs font-bold bg-blue-600 text-white rounded-none">UTC</button>
+                        <button id="tz-raw" onclick="toggleTimelineFormat('raw')" class="px-3 py-1 text-xs font-bold text-slate-400 hover:text-white">Raw Source</button>
+                    </div>
+                </div>
+                <div class="tl" id="timeline-list"></div>
+            </section>
+
+            <!-- View 3: Contradictions & Skeptic Feed -->
+            <section class="view-content" id="v-cf">
+                <h1 class="text-2xl font-black mb-1">Contradictions & Skeptic Feed</h1>
+                <p class="text-xs text-slate-400 mb-4">The Skeptic Agent evaluates each flag for clock drifts and OCR noise before human display.</p>
+                <div id="flags-feed-container" class="space-y-4"></div>
+            </section>
+
+            <!-- View 4: Network Graph -->
+            <section class="view-content" id="v-gr">
+                <h1 class="text-2xl font-black mb-1">Connection Network (Neo4j View)</h1>
+                <p class="text-xs text-slate-400 mb-4">Select any node to view underlying records stored in PostgreSQL.</p>
+                <div class="graph">
+                    <div class="gbox relative">
+                        <div class="absolute top-2 right-2 z-10 flex text-[11px] font-bold">
+                            <button id="gm-3d" onclick="setGraphMode('3d')" class="px-3 py-1 bg-blue-600 text-white">3D</button>
+                            <button id="gm-2d" onclick="setGraphMode('2d')" class="px-3 py-1 bg-[#1e1e1e] text-slate-400">2D</button>
+                        </div>
+                        <div id="network-3d" style="height:460px;width:100%;"></div>
+                        <svg id="network-svg" viewBox="0 0 620 400" width="100%" class="w-full h-auto hidden" role="img"></svg>
+                    </div>
+                    <div class="card" id="graph-side-panel">
+                        <b class="text-sm text-white block mb-1">No node selected</b>
+                        <p class="text-xs text-slate-400">Large circles represent high-degree hubs. Red dashed lines highlight identified conflicts.</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4 mt-3 text-xs text-slate-400">
+                    <span class="flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-none bg-[#3b8cff] inline-block"></i> Person</span>
+                    <span class="flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-none bg-[#27e08a] inline-block"></i> Account</span>
+                    <span class="flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-none bg-[#9b7bff] inline-block"></i> Phone/Device</span>
+                    <span class="flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-none bg-[#f2b84b] inline-block"></i> Location</span>
+                    <span class="flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-none bg-[#ff4d5e] inline-block"></i> Conflict Line</span>
+                </div>
+            </section>
+
+            <!-- View 5: Audit Trail -->
+            <section class="view-content" id="v-au">
+                <h1 class="text-2xl font-black mb-1">Audit Trail</h1>
+                <p class="text-xs text-slate-400 mb-4">Read-only ledger logging every agent reasoning step and investigator decision.</p>
+                <div class="overflow-x-auto border border-[#2a2a2a] rounded-none bg-[#121212]">
+                    <table class="w-full text-left border-collapse min-w-[600px]">
+                        <thead>
+                            <tr class="border-b border-[#2a2a2a] text-xs text-slate-400 font-medium">
+                                <th class="p-3">Time (UTC)</th>
+                                <th class="p-3">Actor</th>
+                                <th class="p-3">Action Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-log-rows" class="text-xs divide-y divide-[#2a2a2a]"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- View 6: Report -->
+            <section class="view-content" id="v-rp">
+                <h1 class="text-2xl font-black mb-1">Court-Ready Report</h1>
+                <p class="text-xs text-slate-400 mb-4">Compiles hash chain ledgers, verified timeline claims, and decision records into PDF format.</p>
+                <div class="flex items-center space-x-3">
+                    <button class="btn-custom g text-xs" onclick="generateReportPDF()">
+                        <i data-lucide="file-check-2" class="w-4 h-4"></i>
+                        <span>Generate Court Report</span>
+                    </button>
+                    <span id="report-status-msg" class="text-xs font-mono text-emerald-400"></span>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Report Modal -->
+    <dialog id="report-dialog" class="bg-[#121212] text-white border border-[#2a2a2a] rounded-none max-w-lg p-6 backdrop:bg-black/80">
+        <div class="bg-white text-slate-900 rounded-none p-5">
+            <h2 class="text-base font-extrabold text-[#123a73]">Chain of Custody Audit Report</h2>
+            <p class="mono text-xs text-slate-600 mb-3">Case FIR-2026/0417</p>
+            <ul class="text-xs text-slate-700 space-y-1 list-disc pl-4">
+                <li>6 files sealed, 5 verified, 1 tampered and excluded</li>
+                <li>3 flags raised, <span id="report-conf-count" class="font-bold text-rose-600">0</span> confirmed, <span id="report-dism-count" class="font-bold text-slate-600">0</span> dismissed</li>
+                <li>Full hash ledger and investigator logs attached</li>
+            </ul>
+        </div>
+        <div class="flex items-center space-x-2 mt-4">
+            <button class="btn-custom g text-xs" onclick="showToast('PDF downloaded successfully!', 'success'); document.getElementById('report-dialog').close();">Download PDF</button>
+            <button class="btn-custom o text-xs" onclick="document.getElementById('report-dialog').close()">Close</button>
+        </div>
+    </dialog>
+
+    <!-- Toast Notification Container -->
+    <div id="toast" class="fixed bottom-5 right-5 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+        <div class="bg-[#121212] border border-[#2a2a2a] shadow-2xl rounded-none p-3.5 flex items-center space-x-3 max-w-md">
+            <i id="toast-icon" data-lucide="info" class="w-5 h-5 shrink-0 text-blue-400"></i>
+            <span id="toast-message" class="text-xs font-semibold text-slate-200">Notification message</span>
+        </div>
+    </div>
+
+    <!-- JAVASCRIPT APP LOGIC -->
+    <script>
+        // Check Session Authentication
+        const savedUser = sessionStorage.getItem('chitragupta_user') || "AGRIM JAIN";
+
+        // Agent Team
+        const agentsList = [
+            ["Case Coordinator", "on"],
+            ["Intake & Safety", "on"],
+            ["Custody", "on"],
+            ["Extraction", "on"],
+            ["Timeline & Claims", "wait"],
+            ["Contradiction Investigator", "on"],
+            ["Skeptic", "on"],
+            ["Network", "wait"],
+            ["Report", "wait"]
+        ];
+
+        // Audit Log Items
+        const auditLog = [
+            ["09:10:02", "Intake & Safety", "Scanned 6 files: clean"],
+            ["09:10:40", "Custody", "Sealed all files, hash chain extended"],
+            ["09:31:15", "Extraction", "OCR confidence 61% on lab_report.pdf p.4, retried with new settings"],
+            ["09:33:50", "Custody", "cdr_phone_9812.csv failed hash check, access blocked"],
+            ["09:33:52", "Case Coordinator", "Replanned: excluded CDR, re-ran contradiction checks"],
+            ["09:36:10", "Skeptic", "Challenged 4 flags, kept 3, dropped 1 (clock offset explains it)"]
+        ];
+
+        window.addEventListener('load', () => {
+            document.getElementById('uname').textContent = savedUser.toUpperCase();
+            document.getElementById('workspace-welcome-name').textContent = savedUser;
+
+            if (window.lucide) lucide.createIcons();
+            document.getElementById('evidence-file-input').addEventListener('change', renderSelectedEvidenceFiles);
+            renderAgentBar();
+            renderTimeline('utc');
+            renderFlagsFeed();
+            renderNetworkGraph();
+            renderAuditLog();
+        });
+
+        function renderSelectedEvidenceFiles(event) {
+            const list = document.getElementById('selected-evidence-files');
+            const files = Array.from(event.target.files || []);
+            list.replaceChildren();
+
+            if (files.length === 0) {
+                list.classList.add('hidden');
+                return;
+            }
+
+            files.forEach(file => {
+                const item = document.createElement('li');
+                item.className = 'flex items-center justify-between gap-4 py-2';
+
+                const name = document.createElement('span');
+                name.className = 'truncate';
+                name.textContent = file.name;
+
+                const size = document.createElement('span');
+                size.className = 'shrink-0 text-xs text-slate-500';
+                size.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+
+                item.append(name, size);
+                list.append(item);
+            });
+
+            list.classList.remove('hidden');
+        }
+
+        function handleLogout() {
+            sessionStorage.removeItem('chitragupta_user');
+            window.location.href = 'index.html';
+        }
+
+        // Dashboard Navigation
+        function switchNavTab(viewKey) {
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.setAttribute('aria-current', btn.dataset.v === viewKey);
+            });
+
+            document.querySelectorAll('.view-content').forEach(view => {
+                view.classList.toggle('on', view.id === `v-${viewKey}`);
+            });
+
+            if (window.lucide) lucide.createIcons();
+            if (viewKey === 'gr') setGraphMode(graphMode);
+        }
+
+        // Render Functions
+        function renderAgentBar() {
+            document.getElementById('agents-bar').innerHTML = agentsList.map(a => `
+                <div class="ag ${a[1]}">
+                    <i class="dot"></i>
+                    <span>${a[0]}</span>
+                </div>
+            `).join('');
+        }
+
+        const eventsList = [
+            ["09:41:10", "09:41:10 IST", "Cash withdrawn at Sector 21 ATM", "atm_logs_oct.csv"],
+            ["09:44:00", "09:44:00 IST", "Phone 9812 pings Tower KR-14 (Karol Bagh)", "cdr_phone_9812.csv", true],
+            ["09:48:25", "15:18:25 CCTV", "Suspect seen at Gate 4, Sector 18", "cctv_gate4.mp4", true],
+            ["10:05:00", "10:05 hrs", "Witness says suspect left before 09:30", "witness_stmt_02.pdf", true],
+            ["10:20:42", "10:20:42 IST", "₹4.9L moved to account …771", "bank_stmt_acc771.xlsx"]
+        ];
+
+        function renderTimeline(mode = 'utc') {
+            document.getElementById('timeline-list').innerHTML = eventsList.map(e => `
+                <div class="ev ${e[4] ? 'c' : ''}">
+                    <time class="mono text-emerald-400 font-bold">${mode === 'utc' ? e[0] + ' UTC' : e[1]}</time>
+                    ${mode === 'utc' ? `<span class="mono text-slate-500 text-xs ml-1">(${e[1]})</span>` : ''}
+                    <div class="text-sm font-semibold text-white mt-0.5">${e[2]}</div>
+                    <div class="text-xs text-slate-400">Source: ${e[3]}</div>
+                </div>
+            `).join('');
+        }
+
+        function toggleTimelineFormat(mode) {
+            document.getElementById('tz-utc').className = mode === 'utc' ? 'px-3 py-1 text-xs font-bold bg-blue-600 text-white rounded-none' : 'px-3 py-1 text-xs font-bold text-slate-400 hover:text-white';
+            document.getElementById('tz-raw').className = mode === 'raw' ? 'px-3 py-1 text-xs font-bold bg-blue-600 text-white rounded-none' : 'px-3 py-1 text-xs font-bold text-slate-400 hover:text-white';
+            renderTimeline(mode);
+        }
+
+        const flagsData = [
+            ["Location mismatch: ATM vs CCTV", "Cash withdrawn at Sector 21 at 09:41, but CCTV shows the suspect at Sector 18 at 09:48. The two places are 14 km apart.", "The CCTV clock runs 7 minutes behind the ATM clock, but 7 minutes does not close a 14 km gap. Likely a real conflict.", "cctv_gate4.mp4 @ 00:12:40", "atm_logs_oct.csv row 318"],
+            ["Phone location vs witness", "Phone 9812 pinged Karol Bagh at 09:44. The witness says the suspect had left the area by 09:30.", "Tower pings can drift up to 2 km. Karol Bagh is outside that range of the stated route. Flag kept.", "cdr_phone_9812.csv (blocked)", "witness_stmt_02.pdf p.2"],
+            ["Transfer amount mismatch", "Bank statement shows ₹4.9L moved, lab report lists a seized ledger with ₹4.2L.", "OCR read “4.2” at 61% confidence. Re-read with new settings gave “4.9”. Likely a false alarm.", "bank_stmt_acc771.xlsx row 55", "lab_report.pdf p.4"]
+        ];
+
+        let confirmCount = 0, dismissCount = 0;
+
+        function renderFlagsFeed() {
+            document.getElementById('flags-feed-container').innerHTML = flagsData.map((f, i) => `
+                <div class="card flag-item">
+                    <h3 class="text-sm font-bold text-white mb-1">${f[0]}</h3>
+                    <p class="text-xs text-slate-300 mb-2">${f[1]}</p>
+                    <details class="text-xs border-t border-[#2a2a2a] pt-2 mt-2">
+                        <summary class="text-blue-400 font-bold cursor-pointer">Skeptic Agent Reasoning</summary>
+                        <div class="bg-emerald-950/40 border-l-2 border-emerald-400 p-2.5 rounded-none my-2 text-emerald-200">${f[2]}</div>
+                        <div class="text-slate-400 text-[11px]">Sources: <span class="text-blue-400">${f[3]}</span> | <span class="text-blue-400">${f[4]}</span></div>
+                    </details>
+                    <textarea id="comment-${i}" placeholder="Reason for your decision (required)" class="w-full bg-[#1e1e1e] border border-[#2a2a2a] rounded-none p-2 text-xs text-white my-2 focus:outline-none focus:border-blue-500"></textarea>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="resolveFlag(${i}, 'Confirmed')" class="btn-custom g text-xs py-1.5 px-3">Confirm Flag</button>
+                        <button onclick="resolveFlag(${i}, 'Dismissed')" class="btn-custom o text-xs py-1.5 px-3">Dismiss Flag</button>
+                        <span id="res-${i}" class="text-xs font-mono font-bold ml-2"></span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function resolveFlag(index, status) {
+            const commentBox = document.getElementById(`comment-${index}`);
+            if (!commentBox.value.trim()) {
+                commentBox.classList.add('border-rose-500');
+                showToast('Please provide a decision comment first', 'error');
+                return;
+            }
+
+            if (status === 'Confirmed') confirmCount++;
+            else dismissCount++;
+
+            document.getElementById('report-conf-count').textContent = confirmCount;
+            document.getElementById('report-dism-count').textContent = dismissCount;
+
+            const resLabel = document.getElementById(`res-${index}`);
+            resLabel.textContent = `Decision: ${status}`;
+            resLabel.className = status === 'Confirmed' ? 'text-xs font-mono font-bold ml-2 text-rose-400' : 'text-xs font-mono font-bold ml-2 text-slate-400';
+
+            showToast(`Investigator ${status} flag #${index + 1}`, 'success');
+        }
+
+        // Graph Simulation
+        let nodes = [
+            ["Rakesh Malhotra", 300, 70, "p", 20, "Linked to 4 accounts. Appears in CDR and witness statement."],
+            ["Acc …771", 160, 150, "a", 22, "Receives 6 transfers. Statement: bank_stmt_acc771.xlsx"],
+            ["Acc …902", 100, 260, "a", 12, "Mule account. Statement: bank_stmt_acc902.csv"],
+            ["Acc …334", 230, 310, "a", 12, "Dormant until Oct 9."],
+            ["Phone 9812", 440, 150, "d", 17, "CDR: 214 calls. File blocked after tamper check."],
+            ["Sector 21 ATM", 500, 290, "l", 14, "Cash withdrawal 09:41."],
+            ["Gate 4, Sector 18", 360, 260, "l", 14, "CCTV sighting 09:48."],
+            ["Mobile IMEI …5530", 540, 60, "d", 12, "Seized device. Lab report p.4"]
+        ];
+
+        let edges = [[0,1],[0,4],[1,2],[1,3],[4,7],[0,7],[3,6],[5,6,1],[0,5]];
+        const nodeColors = { p: "#3b8cff", a: "#27e08a", d: "#9b7bff", l: "#f2b84b" };
+
+        function renderNetworkGraph() {
+            const svg = document.getElementById('network-svg');
+            let linesHTML = edges.map(e => `
+                <line x1="${nodes[e[0]][1]}" y1="${nodes[e[0]][2]}" x2="${nodes[e[1]][1]}" y2="${nodes[e[1]][2]}"
+                      stroke="${e[2] ? '#ff4d5e' : '#1a2d4a'}" stroke-width="${e[2] ? 3 : 2}" ${e[2] ? 'stroke-dasharray="6 4"' : ''}/>
+            `).join('');
+
+            let nodesHTML = nodes.map((n, i) => `
+                <g class="node" onclick="pickNode(${i})">
+                    <circle cx="${n[1]}" cy="${n[2]}" r="${n[4]}" fill="${nodeColors[n[3]]}" fill-opacity="0.85" ${n[4] >= 20 ? 'stroke="#fff" stroke-width="2"' : ''}/>
+                    <text x="${n[1]}" y="${n[2] + n[4] + 14}" text-anchor="middle">${n[0]}</text>
+                </g>
+            `).join('');
+
+            svg.innerHTML = linesHTML + nodesHTML;
+        }
+
+
+        // ---------- 3D graph + Obsidian import (additive; 2D SVG above is untouched) ----------
+        let graph3D = null, graphMode = '3d';
+
+        function setGraphMode(mode) {
+            graphMode = (mode === '3d' && typeof ForceGraph3D !== 'undefined') ? '3d' : '2d';
+            const el = document.getElementById('network-3d');
+            const svg = document.getElementById('network-svg');
+            el.classList.toggle('hidden', graphMode !== '3d');
+            svg.classList.toggle('hidden', graphMode !== '2d');
+            document.getElementById('gm-3d').className = 'px-3 py-1 ' + (graphMode === '3d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+            document.getElementById('gm-2d').className = 'px-3 py-1 ' + (graphMode === '2d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+            if (graphMode === '3d') render3DGraph();
+        }
+
+        function render3DGraph() {
+            const el = document.getElementById('network-3d');
+            const data = {
+                nodes: nodes.map((n, i) => ({ id: i, name: n[0], type: n[3], val: n[4] })),
+                links: edges.map((e, i) => ({ source: e[0], target: e[1], conflict: !!e[2], label: edgeLabels[i] || '' }))
+            };
+            if (!graph3D) {
+                graph3D = ForceGraph3D()(el)
+                    .backgroundColor('#0b0f14')
+                    .nodeLabel('name')
+                    .nodeColor(n => nodeColors[n.type])
+                    .nodeVal(n => n.val / 4)
+                    .nodeOpacity(0.92)
+                    .nodeResolution(20)
+                    .linkColor(l => l.conflict ? '#ff4d5e' : '#3b5f8f')
+                    .linkWidth(l => l.conflict ? 2.5 : 1)
+                    .linkOpacity(0.7)
+                    .linkLabel('label')
+                    .linkDirectionalParticles(l => l.conflict ? 4 : 0)
+                    .linkDirectionalParticleWidth(2)
+                    .onNodeClick(n => {
+                        pickNode(n.id);               // same side panel as before
+                        const d = 90, r = 1 + d / Math.hypot(n.x, n.y, n.z);
+                        graph3D.cameraPosition({ x: n.x * r, y: n.y * r, z: n.z * r }, n, 900);
+                    });
+            }
+            graph3D.width(el.clientWidth).height(460).graphData(data);
+        }
+        window.addEventListener('resize', () => {
+            if (graph3D && graphMode === '3d') graph3D.width(document.getElementById('network-3d').clientWidth);
+        });
+
+        // ---------- Graph data from backend JSON ----------
+        // Expected: { nodes:[{id,label,type,size?,description?}], edges:[{source,target,label?,conflict?}] }
+        // type: person | account | device | phone | location
+        const GRAPH_API_URL = '/api/graph';          // <- change to your backend endpoint
+        const GRAPH_FALLBACK_FILE = 'graph.json';    // optional local file (e.g. exported from Obsidian)
+        const typeMap = { person: 'p', account: 'a', device: 'd', phone: 'd', location: 'l' };
+        let edgeLabels = [];
+
+        function applyGraphJSON(g) {
+            if (!g || !Array.isArray(g.nodes) || !Array.isArray(g.edges) || !g.nodes.length) return false;
+            const idx = {}, deg = {};
+            g.edges.forEach(e => {
+                deg[e.source] = (deg[e.source] || 0) + 1;
+                deg[e.target] = (deg[e.target] || 0) + 1;
+            });
+            const N = g.nodes.length;
+            nodes = g.nodes.map((n, i) => {
+                idx[n.id] = i;
+                const ang = 2 * Math.PI * i / N;   // circular layout, used only by the 2D SVG mode
+                return [
+                    n.label || String(n.id),
+                    310 + 250 * Math.cos(ang), 200 + 150 * Math.sin(ang),
+                    typeMap[String(n.type || '').toLowerCase()] || 'p',
+                    n.size || 10 + Math.min((deg[n.id] || 0) * 3, 14),
+                    n.description || n.desc || ''
+                ];
+            });
+            const valid = g.edges.filter(e => idx[e.source] !== undefined && idx[e.target] !== undefined);
+            edges = valid.map(e => {
+                const r = [idx[e.source], idx[e.target]];
+                if (e.conflict || /conflict/i.test(e.label || '')) r.push(1);
+                return r;
+            });
+            edgeLabels = valid.map(e => e.label || '');
+            return true;
+        }
+
+        async function loadGraphData() {
+            for (const url of [GRAPH_API_URL, GRAPH_FALLBACK_FILE]) {
+                try {
+                    const r = await fetch(url, { cache: 'no-store' });
+                    if (!r.ok) continue;
+                    if (applyGraphJSON(await r.json())) {
+                        renderNetworkGraph();
+                        if (graph3D) render3DGraph();
+                        return;
+                    }
+                } catch (e) { /* try next source */ }
+            }
+            // nothing available: built-in demo data stays
+        }
+        window.addEventListener('load', loadGraphData);
+
+        function pickNode(index) {
+            const n = nodes[index];
+            document.getElementById('graph-side-panel').innerHTML = `
+                <b class="text-sm text-white block mb-1">${n[0]}</b>
+                <p class="text-xs text-slate-300 mb-2">${n[5]}</p>
+                <div class="text-[11px] font-mono text-emerald-400">Records in PostgreSQL: ${n[4] > 15 ? 4 : 2}</div>
+            `;
+        }
+
+        function renderAuditLog() {
+            document.getElementById('audit-log-rows').innerHTML = auditLog.map(l => `
+                <tr>
+                    <td class="p-3 mono text-slate-400">${l[0]}</td>
+                    <td class="p-3 text-slate-300 font-semibold">${l[1]}</td>
+                    <td class="p-3 text-slate-200">${l[2]}</td>
+                </tr>
+            `).join('');
+        }
+
+        function generateReportPDF() {
+            document.getElementById('report-status-msg').textContent = "Compiling report...";
+            setTimeout(() => {
+                document.getElementById('report-status-msg').textContent = "";
+                document.getElementById('report-dialog').showModal();
+            }, 600);
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMessage.textContent = message;
+
+            if (type === 'success') {
+                toastIcon.setAttribute('data-lucide', 'check-circle-2');
+                toastIcon.className = 'w-5 h-5 shrink-0 text-emerald-400';
+            } else if (type === 'error') {
+                toastIcon.setAttribute('data-lucide', 'alert-circle');
+                toastIcon.className = 'w-5 h-5 shrink-0 text-rose-400';
+            } else {
+                toastIcon.setAttribute('data-lucide', 'info');
+                toastIcon.className = 'w-5 h-5 shrink-0 text-blue-400';
+            }
+
+            if (window.lucide) lucide.createIcons();
+
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3500);
+        }
+    </script>
+</body>
+</html>

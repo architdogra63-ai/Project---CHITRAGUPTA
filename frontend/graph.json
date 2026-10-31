@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    { "id": "person-1", "label": "Rakesh Malhotra", "type": "person", "description": "Linked to 4 accounts. Appears in CDR and witness statement." },
+    { "id": "account-771", "label": "Acc …771", "type": "account", "description": "Receives 6 transfers." },
+    { "id": "account-902", "label": "Acc …902", "type": "account", "description": "Mule account." },
+    { "id": "phone-9812", "label": "Phone 9812", "type": "phone", "description": "CDR: 214 calls." },
+    { "id": "loc-atm", "label": "Sector 21 ATM", "type": "location", "description": "Cash withdrawal 09:41." },
+    { "id": "loc-gate4", "label": "Gate 4, Sector 18", "type": "location", "description": "CCTV sighting 09:48." }
+  ],
+  "edges": [
+    { "source": "person-1", "target": "account-771", "label": "owns" },
+    { "source": "account-771", "target": "account-902", "label": "transfer" },
+    { "source": "person-1", "target": "phone-9812", "label": "uses" },
+    { "source": "person-1", "target": "loc-atm", "label": "withdrawal" },
+    { "source": "loc-atm", "target": "loc-gate4", "label": "timeline conflict", "conflict": true }
+  ]
+}

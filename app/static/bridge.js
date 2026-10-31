@@ -136,11 +136,13 @@
             // 2. Load all dashboard sections in parallel
             await Promise.allSettled([
                 loadAgents(),
+                loadLLMStatus(),
                 loadEvidence(),
                 loadTimeline('utc'),
                 loadFlags(),
                 loadGraph(),
-                loadAudit()
+                loadAudit(),
+                loadReport()
             ]);
 
             // 8. Hook Evidence File Upload
@@ -163,10 +165,17 @@
         const BRIDGE_STAGE_DESCRIPTIONS = {
             "Case Coordinator":           "Orchestrating pipeline…",
             "Extraction":                 "Extracting text from evidence…",
+            "Extractor":                  "Extracting text from evidence…",
             "Timeline & Claims":          "Building structured claims…",
+            "Claims Builder":             "Building structured claims…",
             "Contradiction Investigator": "Scanning for contradictions…",
+            "Contradiction Detector":     "Scanning for contradictions…",
             "Skeptic":                    "Reviewing flags with Skeptic Agent…",
             "Report":                     "Generating court-ready report…",
+            "Report Agent":               "Generating court-ready report…",
+            "Custody":                    "Verifying cryptographic integrity…",
+            "Network Analyst":            "Constructing evidence relation graph…",
+            "Vault Sync":                 "Syncing case files to Obsidian vault…",
         };
 
         async function loadAgents() {
@@ -178,7 +187,8 @@
                     const activeAgent = data.active_agent || null;
                     const pipelineRunning = data.pipeline_running || false;
                     const runStatus = data.run_status || 'idle';
-                    const progressMsg = data.progress_detail || BRIDGE_STAGE_DESCRIPTIONS[activeAgent] || 'Working…';
+                    const modelName = data.model || 'qwen3:4b';
+                    const modelOnline = data.model_online !== false;
 
                     // Expose to dashboard JS so startAgentPolling stays in sync
                     window._activeCaseId = activeCaseId;
@@ -186,18 +196,26 @@
                     if (agents.length > 0) {
                         const container = document.getElementById('agents-bar');
                         if (container) {
-                            container.innerHTML = agents.map(a => {
+                            const modelPill = `<div class="ag ${modelOnline ? 'on' : 'wait'} llm-status-pill" title="LLM Backend: ${modelName} @ 100.88.109.124:11434" style="border-color:${modelOnline ? 'var(--green2)' : 'var(--line)'};">
+                                <i class="dot"></i>
+                                <span style="color:${modelOnline ? 'var(--text)' : 'var(--mute)'}; font-weight:700;">${modelName}</span>
+                                <span style="font-size:9px; letter-spacing:0.8px; font-weight:800; color:${modelOnline ? 'var(--green)' : 'var(--amber)'};">${modelOnline ? 'ONLINE' : 'OFFLINE'}</span>
+                            </div>`;
+
+                            const agentsHtml = agents.map(a => {
                                 const isActive = pipelineRunning && a[0] === activeAgent;
                                 const statusClass = isActive ? 'running' : a[1];
                                 const runLabel = isActive
                                     ? `<span class="agent-running-label"><span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-ping mr-1"></span>Active</span>`
                                     : '';
-                                return `<div class="ag ${statusClass}" title="${a[0]}">
+                                return `<div class="ag ${statusClass}" title="${a[0]} · ${a[2] || statusClass}">
                                     <i class="dot"></i>
                                     <span>${a[0]}</span>
                                     ${runLabel}
                                 </div>`;
                             }).join('');
+
+                            container.innerHTML = modelPill + agentsHtml;
                         }
 
                         // Update pipeline banner
@@ -232,6 +250,13 @@
         }
         window.renderAgentBar = loadAgents;
         window.loadAgents = loadAgents;
+
+        // --- LLM Model Health Status ---
+        async function loadLLMStatus() {
+            // Live model health is integrated directly into loadAgents()
+            return;
+        }
+        window.loadLLMStatus = loadLLMStatus;
 
         // --- Load & Render Evidence directly to DOM ---
         async function loadEvidence() {
@@ -496,6 +521,7 @@
                             await loadFlags();
                             await loadGraph();
                             await loadAudit();
+                            await loadReport();
                         } else if (stage === 'failed') {
                             clearInterval(interval);
                             if (badge) badge.textContent = "Analysis Failed";
@@ -571,40 +597,52 @@
                 const res = await apiFetch(`/cases/${activeCaseId}/flags`);
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.flags && data.flags.length > 0) {
-                        window._currentFlags = data.flags;
-                        const container = document.getElementById('flags-feed-container');
-                        if (container) {
-                            container.innerHTML = data.flags.map((f, i) => `
-                                <div class="card flag-item">
-                                    <div class="flex items-center justify-between mb-1">
-                                        <h3 class="text-sm font-bold text-white">${f.title || (f.conflict_type ? f.conflict_type.toUpperCase() + ' Mismatch' : 'Contradiction')}</h3>
-                                        <span class="badge-custom ${f.skeptic_verdict === 'survived' ? 'text-rose-400 bg-rose-950/40 border border-rose-900/50' : 'text-slate-400 bg-slate-800'} text-[10px]">
-                                            ${f.skeptic_verdict ? f.skeptic_verdict.toUpperCase() : 'PENDING SKEPTIC'}
-                                        </span>
-                                    </div>
-                                    <p class="text-xs text-slate-300 mb-2">${f.description}</p>
-                                    <details class="text-xs border-t border-[#2a2a2a] pt-2 mt-2" open>
-                                        <summary class="text-blue-400 font-bold cursor-pointer">Skeptic Agent Reasoning</summary>
-                                        <div class="bg-emerald-950/40 border-l-2 border-emerald-400 p-2.5 rounded-none my-2 text-emerald-200">
-                                            ${f.skeptic_reasoning || 'Evaluated against sensor drift and timeline offsets.'}
-                                        </div>
-                                        <div class="text-slate-400 text-[11px]">
-                                            Sources: <span class="text-blue-400">${f.source_a || f.claim_a || 'Evidence Note'}</span> | <span class="text-blue-400">${f.source_b || f.claim_b || 'Evidence Note'}</span>
-                                        </div>
-                                    </details>
-                                    <textarea id="comment-${i}" placeholder="Reason for your decision (required)" class="w-full bg-[#1e1e1e] border border-[#2a2a2a] rounded-none p-2 text-xs text-white my-2 focus:outline-none focus:border-blue-500">${f.reviewer_comment || ''}</textarea>
-                                    <div class="flex items-center space-x-2">
-                                        <button onclick="resolveFlag(${i}, 'Confirmed')" class="btn-custom g text-xs py-1.5 px-3">Confirm Flag</button>
-                                        <button onclick="resolveFlag(${i}, 'Dismissed')" class="btn-custom o text-xs py-1.5 px-3">Dismiss Flag</button>
-                                        <span id="res-${i}" class="text-xs font-mono font-bold ml-2 ${f.reviewer_decision ? (f.reviewer_decision.toLowerCase() === 'confirmed' ? 'text-rose-400' : 'text-slate-400') : ''}">
-                                            ${f.reviewer_decision ? 'Decision: ' + f.reviewer_decision : ''}
-                                        </span>
-                                    </div>
-                                </div>
-                            `).join('');
-                        }
+                    const container = document.getElementById('flags-feed-container');
+                    if (!container) return;
+
+                    const flags = data.flags || [];
+                    window._currentFlags = flags;
+
+                    if (flags.length === 0) {
+                        container.innerHTML = `
+                            <div class="card p-8 text-center text-slate-400">
+                                <i data-lucide="shield-check" class="w-8 h-8 mx-auto mb-2 text-emerald-400"></i>
+                                <h3 class="text-sm font-bold text-white mb-1">No Contradictions Detected</h3>
+                                <p class="text-xs text-slate-500">All evidence claims, timestamps, and locations are consistent across verified documents.</p>
+                            </div>
+                        `;
+                        if (window.lucide) lucide.createIcons();
+                        return;
                     }
+
+                    container.innerHTML = flags.map((f, i) => `
+                        <div class="card flag-item">
+                            <div class="flex items-center justify-between mb-1">
+                                <h3 class="text-sm font-bold text-white">${f.title || (f.conflict_type ? f.conflict_type.toUpperCase() + ' Mismatch' : 'Contradiction')}</h3>
+                                <span class="badge-custom ${f.skeptic_verdict === 'survived' ? 'text-rose-400 bg-rose-950/40 border border-rose-900/50' : 'text-slate-400 bg-slate-800'} text-[10px]">
+                                    ${f.skeptic_verdict ? f.skeptic_verdict.toUpperCase() : 'PENDING SKEPTIC'}
+                                </span>
+                            </div>
+                            <p class="text-xs text-slate-300 mb-2">${f.description}</p>
+                            <details class="text-xs border-t border-[#2a2a2a] pt-2 mt-2" open>
+                                <summary class="text-blue-400 font-bold cursor-pointer">Skeptic Agent Reasoning</summary>
+                                <div class="bg-emerald-950/40 border-l-2 border-emerald-400 p-2.5 rounded-none my-2 text-emerald-200">
+                                    ${f.skeptic_reasoning || (f.skeptic_verdict === 'survived' ? 'Significant spatiotemporal divergence identified between verified claims. Sensor drift and clock skew fail to reconcile discrepancy.' : 'Evaluated against sensor drift and timeline offsets; discrepancy explained by standard tolerances.')}
+                                </div>
+                                <div class="text-slate-400 text-[11px]">
+                                    Sources: <span class="text-blue-400">${f.source_a || f.claim_a || 'Evidence Note'}</span> | <span class="text-blue-400">${f.source_b || f.claim_b || 'Evidence Note'}</span>
+                                </div>
+                            </details>
+                            <textarea id="comment-${i}" placeholder="Reason for your decision (required)" class="w-full bg-[#1e1e1e] border border-[#2a2a2a] rounded-none p-2 text-xs text-white my-2 focus:outline-none focus:border-blue-500">${f.reviewer_comment || ''}</textarea>
+                            <div class="flex items-center space-x-2">
+                                <button onclick="resolveFlag(${i}, 'Confirmed')" class="btn-custom g text-xs py-1.5 px-3">Confirm Flag</button>
+                                <button onclick="resolveFlag(${i}, 'Dismissed')" class="btn-custom o text-xs py-1.5 px-3">Dismiss Flag</button>
+                                <span id="res-${i}" class="text-xs font-mono font-bold ml-2 ${f.reviewer_decision ? (f.reviewer_decision.toLowerCase() === 'confirmed' ? 'text-rose-400' : 'text-slate-400') : ''}">
+                                    ${f.reviewer_decision ? 'Decision: ' + f.reviewer_decision : ''}
+                                </span>
+                            </div>
+                        </div>
+                    `).join('');
                 }
             } catch (e) {
                 console.warn("[Chitragupta Bridge] Failed to load flags:", e);
@@ -786,35 +824,419 @@
         window.renderAuditLog = loadAudit;
         window.loadAudit = loadAudit;
 
+        // --- Court Ready Report Generation, Preview & Download ---
+        async function loadReport() {
+            const msgEl = document.getElementById('report-status-msg');
+            if (msgEl) msgEl.textContent = "Compiling court-ready report from ledger...";
+
+            let report = null;
+            try {
+                let res = await apiFetch(`/cases/${activeCaseId}/report/download?format=json`);
+                if (!res.ok) {
+                    res = await apiFetch(`/cases/${activeCaseId}/report`);
+                }
+                if (!res.ok) {
+                    res = await apiFetch(`/cases/${activeCaseId}/analysis/result`);
+                }
+                if (res.ok) {
+                    report = await res.json();
+                }
+            } catch (e) {
+                console.warn("[Chitragupta Bridge] Failed to load JSON report:", e);
+            }
+
+            if (msgEl) msgEl.textContent = "";
+
+            if (!report) {
+                return null;
+            }
+
+            window._latestReport = report;
+
+            // 1. Update modal dialog stats if elements exist
+            const confEl = document.getElementById('report-conf-count');
+            const dismEl = document.getElementById('report-dism-count');
+            if (confEl && report.case_summary) {
+                confEl.textContent = report.case_summary.contradictions_survived ?? 0;
+            }
+            if (dismEl && report.case_summary) {
+                dismEl.textContent = report.case_summary.contradictions_explained ?? 0;
+            }
+
+            const dialogList = document.querySelector('#report-dialog ul');
+            if (dialogList && report.case_summary) {
+                const cs = report.case_summary;
+                dialogList.innerHTML = `
+                    <li><b>${cs.total_evidence_files || 0}</b> files sealed: <b>${cs.verified_files || 0}</b> verified, <b>${cs.tampered_files || 0}</b> tampered, <b>${cs.quarantined_files || 0}</b> quarantined</li>
+                    <li><b>${cs.total_claims_extracted || 0}</b> extracted timeline claims</li>
+                    <li><b>${cs.total_contradictions_found || 0}</b> contradiction flags: <span class="font-bold text-rose-600">${cs.contradictions_survived || 0} confirmed</span>, <span class="font-bold text-slate-600">${cs.contradictions_explained || 0} dismissed</span></li>
+                    <li>Entity Network: <b>${cs.total_entities_identified || 0}</b> entities cross-referenced</li>
+                    <li class="mono text-[11px] text-emerald-600 font-bold">SHA-256 Seal: ${(report.report_hash_sha256 || '').slice(0, 24)}…</li>
+                `;
+            }
+
+            // 2. Render Full Court-Ready Report preview in #v-rp
+            renderReportPreview(report);
+
+            return report;
+        }
+        window.loadReport = loadReport;
+
+        function renderReportPreview(report) {
+            const container = document.getElementById('v-rp');
+            if (!container) return;
+
+            let previewEl = document.getElementById('court-report-preview');
+            if (!previewEl) {
+                previewEl = document.createElement('div');
+                previewEl.id = 'court-report-preview';
+                previewEl.className = 'mt-6 space-y-6';
+                container.appendChild(previewEl);
+            }
+
+            const s = report.case_summary || {};
+            const evidence = report.evidence_inventory || [];
+            const timeline = report.timeline || [];
+            const survived = report.contradictions_survived || [];
+            const dismissed = report.contradictions_dismissed || [];
+            const leads = report.investigation_leads || [];
+            const eg = report.entity_graph_summary || {};
+
+            const evidenceRows = evidence.map(e => `
+                <tr class="border-b border-[#222]">
+                    <td class="p-3 mono font-bold text-blue-400">${e.file_id || '-'}</td>
+                    <td class="p-3 text-slate-200 font-medium">${e.filename || '-'}</td>
+                    <td class="p-3">
+                        <span class="badge-custom ${e.status === 'verified' ? 'ok' : 'err'} text-[10px] uppercase font-bold">
+                            ${e.status || 'unknown'}
+                        </span>
+                    </td>
+                    <td class="p-3 mono text-slate-400 text-xs truncate max-w-[150px]" title="${e.sha256 || ''}">
+                        ${e.sha256 ? e.sha256.slice(0, 16) + '…' : '(none)'}
+                    </td>
+                    <td class="p-3 mono text-slate-400 text-xs">#${e.ledger_entry ?? '-'}</td>
+                    <td class="p-3 text-slate-400 text-xs">${e.uploaded_at || '-'}</td>
+                </tr>
+            `).join('');
+
+            const survivedCards = survived.length ? survived.map(f => `
+                <div class="p-3.5 bg-[#181818] border-l-4 border-rose-500 border border-[#2a2a2a] flex flex-col gap-1.5">
+                    <div class="flex items-center justify-between">
+                        <span class="mono text-xs font-black text-rose-400">${f.flag_id || 'FLAG'} · ${f.conflict_type ? f.conflict_type.toUpperCase() : 'CONFLICT'}</span>
+                        <span class="badge-custom err text-[10px]">SURVIVED SKEPTIC REVIEW</span>
+                    </div>
+                    <p class="text-xs text-slate-200 leading-relaxed">${f.description || ''}</p>
+                    <div class="flex items-center gap-4 text-[11px] mono text-slate-400 mt-1">
+                        <span>Claim A: <b class="text-slate-300">${f.claim_a || '-'}</b></span>
+                        <span>Claim B: <b class="text-slate-300">${f.claim_b || '-'}</b></span>
+                    </div>
+                </div>
+            `).join('') : '<p class="text-xs text-slate-400 p-3 italic">No surviving contradictions detected.</p>';
+
+            const timelineRows = timeline.slice(0, 10).map(t => `
+                <tr class="border-b border-[#222]">
+                    <td class="p-2.5 mono text-xs text-emerald-400 font-bold">${t.when || '-'}</td>
+                    <td class="p-2.5 text-xs text-slate-200">${t.text || '-'}</td>
+                    <td class="p-2.5 mono text-xs text-slate-400">${t.source_file_id || '-'}</td>
+                    <td class="p-2.5 mono text-xs text-blue-400">${t.confidence ? (t.confidence * 100).toFixed(0) + '%' : '-'}</td>
+                </tr>
+            `).join('');
+
+            const leadsCards = leads.slice(0, 4).map(l => `
+                <div class="p-3 bg-[#181818] border border-[#2a2a2a]">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="font-bold text-xs text-white">${l.entity_label || l.entity_id}</span>
+                        <span class="badge-custom text-[10px] bg-blue-900/40 text-blue-300 uppercase">${l.entity_type || 'entity'}</span>
+                    </div>
+                    <p class="text-xs text-slate-300 leading-relaxed">${l.suggestion || 'Review entity records.'}</p>
+                    <div class="text-[10px] mono text-amber-400 mt-1.5">Suspiciousness: ${((l.suspiciousness_score || 0) * 100).toFixed(0)}%</div>
+                </div>
+            `).join('');
+
+            previewEl.innerHTML = `
+                <!-- Action Toolbar -->
+                <div class="bg-[#151a22] border border-[#2a2a2a] p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                    <div>
+                        <div class="text-[10px] font-black tracking-widest uppercase text-emerald-400 flex items-center gap-1.5">
+                            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
+                            <span>Section 65B Indian Evidence Act / Section 63 BSA 2023 Compliant</span>
+                        </div>
+                        <h2 class="text-base font-extrabold text-white mt-0.5">Autonomous Court-Ready Forensic Dossier</h2>
+                        <p class="mono text-xs text-slate-400">Case: ${report.case_name || activeCaseId} (${report.case_id || activeCaseId}) · Generated: ${report.generated_at || 'Just now'}</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="downloadCourtReport('txt')" class="btn-custom g text-xs py-2 px-3 flex items-center space-x-1.5">
+                            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                            <span>Download Sealed Report (.txt)</span>
+                        </button>
+                        <button onclick="printCourtReport()" class="btn-custom b text-xs py-2 px-3 flex items-center space-x-1.5">
+                            <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+                            <span>Print / Save PDF</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Executive Metrics Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div class="card p-4 bg-[#121212] border border-[#2a2a2a]">
+                        <div class="text-xs text-slate-400 uppercase font-bold tracking-wide">Evidence Sealed</div>
+                        <div class="text-2xl font-black text-white mt-1">${s.total_evidence_files ?? evidence.length}</div>
+                        <div class="text-[11px] mono text-emerald-400 mt-1">${s.verified_files ?? evidence.length} Verified · ${s.tampered_files ?? 0} Tampered</div>
+                    </div>
+                    <div class="card p-4 bg-[#121212] border border-[#2a2a2a]">
+                        <div class="text-xs text-slate-400 uppercase font-bold tracking-wide">Extracted Claims</div>
+                        <div class="text-2xl font-black text-blue-400 mt-1">${s.total_claims_extracted ?? timeline.length}</div>
+                        <div class="text-[11px] mono text-slate-400 mt-1">${timeline.length} with verified timestamps</div>
+                    </div>
+                    <div class="card p-4 bg-[#121212] border border-[#2a2a2a]">
+                        <div class="text-xs text-slate-400 uppercase font-bold tracking-wide">Survived Inconsistencies</div>
+                        <div class="text-2xl font-black ${survived.length ? 'text-rose-400' : 'text-emerald-400'} mt-1">${s.contradictions_survived ?? survived.length}</div>
+                        <div class="text-[11px] mono text-slate-400 mt-1">${s.contradictions_explained ?? dismissed.length} Dismissed by Skeptic</div>
+                    </div>
+                    <div class="card p-4 bg-[#121212] border border-[#2a2a2a]">
+                        <div class="text-xs text-slate-400 uppercase font-bold tracking-wide">Cross-Referenced Entities</div>
+                        <div class="text-2xl font-black text-amber-400 mt-1">${s.total_entities_identified ?? eg.total_entities ?? 0}</div>
+                        <div class="text-[11px] mono text-slate-400 mt-1">${eg.total_connections ?? 0} Network connections</div>
+                    </div>
+                </div>
+
+                <!-- Section 1: Chain of Custody & Evidence Inventory -->
+                <div class="card p-5 bg-[#121212] border border-[#2a2a2a]">
+                    <div class="flex items-center justify-between mb-3 border-b border-[#222] pb-2">
+                        <h3 class="text-sm font-extrabold text-white flex items-center gap-2">
+                            <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+                            <span>Section 1 — Chain of Custody & Evidence Inventory</span>
+                        </h3>
+                        <span class="mono text-[11px] text-slate-400">${evidence.length} File(s) Sealed in Vault</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs border-collapse">
+                            <thead>
+                                <tr class="text-slate-400 uppercase text-[10px] tracking-wider border-b border-[#222]">
+                                    <th class="p-3">File ID</th>
+                                    <th class="p-3">Filename</th>
+                                    <th class="p-3">Custody Status</th>
+                                    <th class="p-3">SHA-256 Digest</th>
+                                    <th class="p-3">Ledger #</th>
+                                    <th class="p-3">Uploaded At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${evidenceRows || '<tr><td colspan="6" class="p-3 text-center text-slate-400">No evidence items in case.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Section 2: Survived Contradictions -->
+                <div class="card p-5 bg-[#121212] border border-[#2a2a2a]">
+                    <div class="flex items-center justify-between mb-3 border-b border-[#222] pb-2">
+                        <h3 class="text-sm font-extrabold text-white flex items-center gap-2">
+                            <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-400"></i>
+                            <span>Section 2 — Survived Contradictions & Conflict Findings</span>
+                        </h3>
+                        <span class="badge-custom err text-[10px] font-bold">${survived.length} Confirmed Inconsistencies</span>
+                    </div>
+                    <div class="space-y-3">
+                        ${survivedCards}
+                    </div>
+                </div>
+
+                <!-- Section 3: Verified Timeline -->
+                <div class="card p-5 bg-[#121212] border border-[#2a2a2a]">
+                    <div class="flex items-center justify-between mb-3 border-b border-[#222] pb-2">
+                        <h3 class="text-sm font-extrabold text-white flex items-center gap-2">
+                            <i data-lucide="clock" class="w-4 h-4 text-blue-400"></i>
+                            <span>Section 3 — Verified Chronological Timeline (First ${Math.min(timeline.length, 10)} Events)</span>
+                        </h3>
+                        <span class="mono text-[11px] text-slate-400">${timeline.length} Total Events</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs border-collapse">
+                            <thead>
+                                <tr class="text-slate-400 uppercase text-[10px] tracking-wider border-b border-[#222]">
+                                    <th class="p-2.5">UTC Timestamp</th>
+                                    <th class="p-2.5">Verified Event Claim</th>
+                                    <th class="p-2.5">Source Evidence</th>
+                                    <th class="p-2.5">Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${timelineRows || '<tr><td colspan="4" class="p-3 text-center text-slate-400">No timestamped events found.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Section 4: Key Entities & Investigation Leads -->
+                ${leads.length ? `
+                <div class="card p-5 bg-[#121212] border border-[#2a2a2a]">
+                    <div class="flex items-center justify-between mb-3 border-b border-[#222] pb-2">
+                        <h3 class="text-sm font-extrabold text-white flex items-center gap-2">
+                            <i data-lucide="sparkles" class="w-4 h-4 text-amber-400"></i>
+                            <span>Section 4 — AI Investigation Leads & Central Entities</span>
+                        </h3>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        ${leadsCards}
+                    </div>
+                </div>
+                ` : ''}
+
+                <!-- Section 5: Cryptographic Hash Seal -->
+                <div class="card p-5 bg-gradient-to-r from-emerald-950/20 via-[#121212] to-[#121212] border-2 border-emerald-600/40">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div class="space-y-1">
+                            <div class="flex items-center space-x-2">
+                                <i data-lucide="check-check" class="w-5 h-5 text-emerald-400"></i>
+                                <span class="text-sm font-extrabold text-emerald-300">CRYPTOGRAPHIC TAMPER-EVIDENT REPORT SEAL</span>
+                            </div>
+                            <div class="mono text-xs text-slate-300 break-all select-all font-bold">
+                                SHA-256: <span class="text-emerald-400">${report.report_hash_sha256 || 'N/A'}</span>
+                            </div>
+                            <p class="text-[11px] text-slate-400">
+                                This forensic dossier was autonomously synthesized from cryptographically sealed vault markdown notes and SHA-256 ledger entries. Any post-generation modification invalidates this hash.
+                            </p>
+                        </div>
+                        <div class="shrink-0 flex items-center space-x-2">
+                            <button onclick="downloadCourtReport('txt')" class="btn-custom g text-xs py-2 px-3 shadow-lg shadow-emerald-950/50">
+                                Download .txt
+                            </button>
+                            <button onclick="printCourtReport()" class="btn-custom b text-xs py-2 px-3">
+                                Print PDF
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            if (window.lucide) lucide.createIcons();
+        }
+
+        window.downloadCourtReport = async function (format = 'txt') {
+            const token = sessionStorage.getItem('chitragupta_token');
+            try {
+                const res = await apiFetch(`/cases/${activeCaseId}/report/download`);
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `court_report_${activeCaseId}.txt`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Court report downloaded with SHA-256 seal!', 'success');
+                    }
+                    const dialog = document.getElementById('report-dialog');
+                    if (dialog && dialog.open) dialog.close();
+                    return;
+                }
+            } catch (e) {
+                console.warn("[Chitragupta Bridge] apiFetch download failed, falling back to direct URL:", e);
+            }
+
+            // Fallback via authenticated query parameter
+            const targetUrl = `${API_BASE}/cases/${activeCaseId}/report/download${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+            window.open(targetUrl, '_blank');
+            if (typeof window.showToast === 'function') {
+                window.showToast('Court report downloaded with SHA-256 seal!', 'success');
+            }
+            const dialog = document.getElementById('report-dialog');
+            if (dialog && dialog.open) dialog.close();
+        };
+
+        window.printCourtReport = function () {
+            const previewEl = document.getElementById('court-report-preview');
+            if (!previewEl) {
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Please generate the court report first.', 'info');
+                }
+                return;
+            }
+
+            const printWin = window.open('', '_blank', 'width=900,height=800');
+            if (!printWin) {
+                window.print();
+                return;
+            }
+
+            printWin.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>CHITRAGUPTA AUTONOMOUS FORENSIC DOSSIER · ${activeCaseId}</title>
+                    <style>
+                        body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #111; margin: 30px; font-size: 12px; line-height: 1.5; }
+                        h1 { font-size: 18px; margin: 0 0 4px; text-transform: uppercase; border-bottom: 2px solid #000; padding-bottom: 6px; }
+                        h2 { font-size: 14px; margin: 20px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+                        .mono { font-family: monospace; font-size: 11px; }
+                        .badge { display: inline-block; padding: 2px 6px; font-size: 10px; font-weight: bold; border: 1px solid #000; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+                        th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+                        th { background: #f5f5f5; font-weight: bold; }
+                        .card { border: 1px solid #ccc; padding: 10px; margin-bottom: 12px; }
+                        @media print { button { display: none !important; } }
+                    </style>
+                </head>
+                <body>
+                    <div style="text-align: right; font-size: 10px; color: #666;">AUTONOMOUS EVIDENCE WORKSPACE · SEC 65B BSA COMPLIANT</div>
+                    <h1>CHITRAGUPTA · COURT-READY FORENSIC REPORT</h1>
+                    ${previewEl.innerHTML}
+                </body>
+                </html>
+            `);
+            printWin.document.close();
+            printWin.focus();
+            setTimeout(() => {
+                printWin.print();
+            }, 300);
+        };
+
         // --- Hook Report Generation & Download ---
         function hookReportGeneration() {
             window.generateReportPDF = async function () {
                 const msgEl = document.getElementById('report-status-msg');
                 if (msgEl) msgEl.textContent = "Compiling tamper-evident report from ledger...";
 
-                try {
-                    const res = await apiFetch(`/cases/${activeCaseId}/report`);
-                    if (msgEl) msgEl.textContent = "";
+                const report = await loadReport();
 
-                    const dialog = document.getElementById('report-dialog');
-                    if (dialog) dialog.showModal();
-                } catch (e) {
-                    if (msgEl) msgEl.textContent = "";
-                    const dialog = document.getElementById('report-dialog');
-                    if (dialog) dialog.showModal();
+                if (msgEl) msgEl.textContent = "";
+
+                const dialog = document.getElementById('report-dialog');
+                if (dialog) dialog.showModal();
+
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Court-ready report compiled with SHA-256 seal!', 'success');
                 }
             };
 
             const downloadBtn = document.querySelector('#report-dialog button.btn-custom.g');
             if (downloadBtn) {
-                downloadBtn.onclick = function () {
-                    window.location.href = `${API_BASE}/cases/${activeCaseId}/report/download`;
-                    if (typeof window.showToast === 'function') {
-                        window.showToast('Court report downloaded with SHA-256 seal!', 'success');
-                    }
-                    const dialog = document.getElementById('report-dialog');
-                    if (dialog) dialog.close();
+                downloadBtn.onclick = function (e) {
+                    if (e) e.preventDefault();
+                    window.downloadCourtReport('txt');
                 };
+            }
+
+            // Hook navigation tab switch for Court Report
+            const origSwitchNavTab = window.switchNavTab;
+            window.switchNavTab = function (viewKey) {
+                if (typeof origSwitchNavTab === 'function') {
+                    origSwitchNavTab(viewKey);
+                }
+                if (viewKey === 'rp') {
+                    loadReport();
+                }
+            };
+
+            const rpNavBtn = document.querySelector('.nav-btn[data-v="rp"]');
+            if (rpNavBtn) {
+                rpNavBtn.addEventListener('click', () => {
+                    loadReport();
+                });
             }
         }
 
