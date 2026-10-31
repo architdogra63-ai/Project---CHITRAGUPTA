@@ -110,10 +110,19 @@
     if (document.getElementById('dashboard-app-container')) {
         console.log("[Chitragupta Bridge] Hooking Dashboard Workspace...");
 
-        let activeCaseId = "CASE-001";
+        let activeCaseId = sessionStorage.getItem('chitragupta_case_id') || "CASE-005";
+        window._activeCaseId = activeCaseId;
         window._currentGraphNodes = [];
         window._currentGraphEdges = [];
         window._currentFlags = [];
+
+        // Aliases for inline script function names (dashboard.html) - must be available immediately
+        // These will be assigned to the actual functions once they're defined (hoisted)
+        window.refreshAgentBar = function(...args) { return loadAgents.apply(this, args); };
+        window.refreshTimeline = function(...args) { return loadTimeline.apply(this, args); };
+        window.refreshFlagsFeed = function(...args) { return loadFlags.apply(this, args); };
+        window.refreshNetworkGraph = function(...args) { return loadGraph.apply(this, args); };
+        window.refreshAuditLog = function(...args) { return loadAudit.apply(this, args); };
 
         async function initDashboard() {
             await ensureAuth();
@@ -124,6 +133,8 @@
                 if (caseRes.ok) {
                     const caseData = await caseRes.json();
                     activeCaseId = caseData.case_id;
+                    sessionStorage.setItem('chitragupta_case_id', activeCaseId);
+                    window._activeCaseId = activeCaseId;
                     const pillSpan = document.querySelector('.case-pill span');
                     if (pillSpan) {
                         pillSpan.textContent = `ACTIVE CASE · ${caseData.name} (${caseData.case_id})`;
@@ -718,57 +729,73 @@
                         window._currentGraphNodes = graph.nodes;
                         window._currentGraphEdges = graph.edges || [];
 
-                        const svg = document.getElementById('network-svg');
-                        if (!svg) return;
-
-                        // Layout positions in grid/radial pattern if coordinates not specified
-                        const nCols = 4;
-                        const colWidth = 130;
-                        const rowHeight = 110;
-                        const offsetX = 80;
-                        const offsetY = 70;
-
-                        const mappedNodes = graph.nodes.map((n, i) => {
-                            const x = n.x || (offsetX + (i % nCols) * colWidth);
-                            const y = n.y || (offsetY + Math.floor(i / nCols) * rowHeight);
-                            const typeCode = (n.type && n.type[0].toLowerCase()) || 'p';
-                            const radius = n.radius || Math.min(24, Math.max(12, (n.degree || 1) * 3));
-                            return { ...n, x, y, typeCode, radius };
-                        });
-                        window._currentGraphNodes = mappedNodes;
-
-                        // Map edges
-                        let linesHTML = '';
-                        if (graph.edges && graph.edges.length > 0) {
-                            linesHTML = graph.edges.map(e => {
-                                let sourceIdx = typeof e.source === 'number' ? e.source : mappedNodes.findIndex(n => n.id === e.source);
-                                let targetIdx = typeof e.target === 'number' ? e.target : mappedNodes.findIndex(n => n.id === e.target);
-                                if (sourceIdx === -1 || targetIdx === -1) return '';
-                                const n1 = mappedNodes[sourceIdx];
-                                const n2 = mappedNodes[targetIdx];
-                                const isConflict = !!e.conflict;
-                                return `
-                                    <line x1="${n1.x}" y1="${n1.y}" x2="${n2.x}" y2="${n2.y}"
-                                          stroke="${isConflict ? '#ff4d5e' : '#1a2d4a'}"
-                                          stroke-width="${isConflict ? 3 : 2}"
-                                          ${isConflict ? 'stroke-dasharray="6 4"' : ''}/>
-                                `;
-                            }).join('');
+                        // 1. Sync with dashboard.html's graph data structures
+                        if (typeof window.applyGraphJSON === 'function') {
+                            try { window.applyGraphJSON(graph); } catch (_) {}
                         }
 
-                        let nodesHTML = mappedNodes.map((n, i) => `
-                            <g class="node" onclick="pickNode(${i})">
-                                <circle cx="${n.x}" cy="${n.y}" r="${n.radius}"
-                                        fill="${nodeColors[n.typeCode] || '#3b8cff'}"
-                                        fill-opacity="0.85"
-                                        ${n.radius >= 18 ? 'stroke="#fff" stroke-width="2"' : ''}/>
-                                <text x="${n.x}" y="${n.y + n.radius + 14}" text-anchor="middle" class="text-[10px] fill-slate-300 font-semibold select-none">
-                                    ${(n.label || n.id).substring(0, 16)}
-                                </text>
-                            </g>
-                        `).join('');
+                        // 2. Render 2D SVG
+                        const svg = document.getElementById('network-svg');
+                        if (svg) {
+                            const nCols = 4;
+                            const colWidth = 130;
+                            const rowHeight = 110;
+                            const offsetX = 80;
+                            const offsetY = 70;
 
-                        svg.innerHTML = linesHTML + nodesHTML;
+                            const mappedNodes = graph.nodes.map((n, i) => {
+                                const x = n.x || (offsetX + (i % nCols) * colWidth);
+                                const y = n.y || (offsetY + Math.floor(i / nCols) * rowHeight);
+                                const typeCode = (n.type && n.type[0].toLowerCase()) || 'p';
+                                const radius = n.radius || Math.min(24, Math.max(12, (n.degree || 1) * 3));
+                                return { ...n, x, y, typeCode, radius };
+                            });
+                            window._currentGraphNodes = mappedNodes;
+
+                            const maxRow = Math.ceil(mappedNodes.length / nCols);
+                            const totalH = Math.max(400, offsetY + maxRow * rowHeight + 40);
+                            svg.setAttribute('viewBox', `0 0 620 ${totalH}`);
+                            svg.style.minHeight = totalH + 'px';
+
+                            // Map edges
+                            let linesHTML = '';
+                            if (graph.edges && graph.edges.length > 0) {
+                                linesHTML = graph.edges.map(e => {
+                                    let sourceIdx = typeof e.source === 'number' ? e.source : mappedNodes.findIndex(n => n.id === e.source);
+                                    let targetIdx = typeof e.target === 'number' ? e.target : mappedNodes.findIndex(n => n.id === e.target);
+                                    if (sourceIdx === -1 || targetIdx === -1) return '';
+                                    const n1 = mappedNodes[sourceIdx];
+                                    const n2 = mappedNodes[targetIdx];
+                                    const isConflict = !!e.conflict;
+                                    return `
+                                        <line x1="${n1.x}" y1="${n1.y}" x2="${n2.x}" y2="${n2.y}"
+                                              stroke="${isConflict ? '#ff4d5e' : '#1a2d4a'}"
+                                              stroke-width="${isConflict ? 3 : 2}"
+                                              ${isConflict ? 'stroke-dasharray="6 4"' : ''}/>
+                                    `;
+                                }).join('');
+                            }
+
+                            let nodesHTML = mappedNodes.map((n, i) => `
+                                <g class="node" onclick="pickNode(${i})">
+                                    <circle cx="${n.x}" cy="${n.y}" r="${n.radius}"
+                                            fill="${nodeColors[n.typeCode] || '#3b8cff'}"
+                                            fill-opacity="0.85"
+                                            ${n.radius >= 18 ? 'stroke="#fff" stroke-width="2"' : ''}/>
+                                    <text x="${n.x}" y="${n.y + n.radius + 14}" text-anchor="middle" class="text-[10px] fill-slate-300 font-semibold select-none">
+                                        ${(n.label || n.id).substring(0, 16)}
+                                    </text>
+                                </g>
+                            `).join('');
+
+                            svg.innerHTML = linesHTML + nodesHTML;
+                        }
+
+                        // 3. Render 3D if 3D mode is active
+                        const currentMode = window.graphMode || '3d';
+                        if (currentMode === '3d' && typeof window.render3DGraph === 'function') {
+                            try { window.render3DGraph(); } catch (_) {}
+                        }
                     }
                 }
             } catch (e) {
@@ -778,21 +805,48 @@
         window.renderNetworkGraph = loadGraph;
         window.loadGraph = loadGraph;
 
+        window.setGraphMode = function(mode) {
+            window.graphMode = (mode === '3d' && typeof ForceGraph3D !== 'undefined') ? '3d' : '2d';
+            const el = document.getElementById('network-3d');
+            const svg = document.getElementById('network-svg');
+            const b3d = document.getElementById('gm-3d');
+            const b2d = document.getElementById('gm-2d');
+
+            if (el) el.classList.toggle('hidden', window.graphMode !== '3d');
+            if (svg) svg.classList.toggle('hidden', window.graphMode !== '2d');
+            if (b3d) b3d.className = 'px-3 py-1 ' + (window.graphMode === '3d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+            if (b2d) b2d.className = 'px-3 py-1 ' + (window.graphMode === '2d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+
+            if (window.graphMode === '3d' && typeof window.render3DGraph === 'function') {
+                window.render3DGraph();
+            } else if (window.graphMode === '2d') {
+                loadGraph();
+            }
+        };
+
         window.pickNode = function (index) {
-            const n = window._currentGraphNodes[index];
+            const n = (window._currentGraphNodes && window._currentGraphNodes[index]) || (typeof nodes !== 'undefined' && nodes[index]);
             if (!n) return;
             const panel = document.getElementById('graph-side-panel');
             if (panel) {
+                const isArray = Array.isArray(n);
+                const label = isArray ? n[0] : (n.label || n.id);
+                const type = isArray ? n[3] : (n.type || 'Entity');
+                const desc = isArray ? n[5] : (n.description || `Entity in case evidence. Centrality degree: ${n.degree || 1}.`);
+                const degree = isArray ? (n[4] > 15 ? 4 : 2) : (n.degree || 1);
+                const claims = isArray ? (n[4] > 15 ? 3 : 1) : (n.claim_count || 1);
+                const susp = !isArray && n.suspiciousness !== undefined ? `<div class="text-amber-400">Suspiciousness Score: ${(n.suspiciousness * 100).toFixed(0)}%</div>` : '';
+
                 panel.innerHTML = `
                     <div class="flex items-center justify-between mb-2">
-                        <b class="text-sm text-white">${n.label || n.id}</b>
-                        <span class="badge-custom text-[10px] bg-blue-900/40 text-blue-300">${(n.type || 'Entity').toUpperCase()}</span>
+                        <b class="text-sm text-white">${label}</b>
+                        <span class="badge-custom text-[10px] bg-blue-900/40 text-blue-300">${String(type).toUpperCase()}</span>
                     </div>
-                    <p class="text-xs text-slate-300 mb-2">${n.description || `Entity in case evidence. Centrality degree: ${n.degree || 1}.`}</p>
+                    <p class="text-xs text-slate-300 mb-2">${desc}</p>
                     <div class="space-y-1 text-[11px] font-mono">
-                        <div class="text-emerald-400">Claims in Vault: ${n.claim_count || 1}</div>
-                        <div class="text-blue-400">Degree Centrality: ${n.degree || 1}</div>
-                        ${n.suspiciousness !== undefined ? `<div class="text-amber-400">Suspiciousness Score: ${(n.suspiciousness * 100).toFixed(0)}%</div>` : ''}
+                        <div class="text-emerald-400">Claims in Vault: ${claims}</div>
+                        <div class="text-blue-400">Degree Centrality: ${degree}</div>
+                        ${susp}
                     </div>
                 `;
             }
@@ -1221,23 +1275,45 @@
                 };
             }
 
-            // Hook navigation tab switch for Court Report
+            // Hook navigation tab switch with guaranteed view switching and data refresh
             const origSwitchNavTab = window.switchNavTab;
             window.switchNavTab = function (viewKey) {
                 if (typeof origSwitchNavTab === 'function') {
-                    origSwitchNavTab(viewKey);
+                    try { origSwitchNavTab(viewKey); } catch (_) {}
                 }
-                if (viewKey === 'rp') {
-                    loadReport();
+                // Guaranteed DOM view switch
+                document.querySelectorAll('.nav-btn').forEach(btn => {
+                    btn.setAttribute('aria-current', btn.dataset.v === viewKey);
+                });
+                document.querySelectorAll('.view-content').forEach(view => {
+                    view.classList.toggle('on', view.id === `v-${viewKey}`);
+                });
+                if (window.lucide) lucide.createIcons();
+
+                // Trigger view data refresh
+                if (viewKey === 'rp') loadReport();
+                if (viewKey === 'tl') loadTimeline('utc');
+                if (viewKey === 'cf') loadFlags();
+                if (viewKey === 'gr') {
+                    loadGraph();
+                    if (typeof window.setGraphMode === 'function') {
+                        window.setGraphMode(window.graphMode || '3d');
+                    }
                 }
+                if (viewKey === 'au') loadAudit();
+                if (viewKey === 'ev') loadEvidence();
             };
 
-            const rpNavBtn = document.querySelector('.nav-btn[data-v="rp"]');
-            if (rpNavBtn) {
-                rpNavBtn.addEventListener('click', () => {
-                    loadReport();
-                });
-            }
+            // Attach explicit click listener to every nav button
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                const vk = btn.dataset.v;
+                if (vk) {
+                    btn.addEventListener('click', (e) => {
+                        if (e) e.preventDefault();
+                        window.switchNavTab(vk);
+                    });
+                }
+            });
         }
 
         // --- Hook Logout ---
@@ -1250,11 +1326,11 @@
             };
         }
 
-        // Initialize when DOM ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initDashboard);
+        // Initialize when DOM ready - use load event to run AFTER inline script
+        if (document.readyState === 'complete') {
+            setTimeout(initDashboard, 0);
         } else {
-            setTimeout(initDashboard, 100);
+            window.addEventListener('load', initDashboard);
         }
     }
 })();

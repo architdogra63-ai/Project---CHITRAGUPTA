@@ -26,19 +26,29 @@ CONFLICT_TYPES = ("time", "place", "people", "amount", "count")
 def _parse_iso(ts: str | None) -> datetime | None:
     """Parse ISO 8601 timestamp; return None if invalid.
     Always returns a timezone-aware UTC datetime to allow subtraction.
+    Handles various formats: Z suffix, +/-HH:MM, +/-HHMM, space instead of T, etc.
     """
     if not ts:
         return None
     try:
+        # Normalize common variations
+        ts = ts.strip()
         # Handle Z suffix
-        ts = ts.replace("Z", "+00:00")
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        # Handle space instead of T separator
+        ts = ts.replace(" ", "T")
+        # Handle missing colon in timezone offset (e.g., +0530 -> +05:30)
+        import re
+        ts = re.sub(r'([+-])(\d{2})(\d{2})$', r'\1\2:\3', ts)
+        
         dt = datetime.fromisoformat(ts)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         else:
             dt = dt.astimezone(timezone.utc)
         return dt
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return None
 
 

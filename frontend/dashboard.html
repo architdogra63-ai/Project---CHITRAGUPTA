@@ -340,8 +340,9 @@
 
         // ── API helpers ──────────────────────────────────────────────────────────
         function apiHeaders() {
+            const token = sessionStorage.getItem('chitragupta_token') || authToken;
             const h = { 'Content-Type': 'application/json' };
-            if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+            if (token) h['Authorization'] = `Bearer ${token}`;
             return h;
         }
 
@@ -435,8 +436,11 @@
                 view.classList.toggle('on', view.id === `v-${viewKey}`);
             });
             if (window.lucide) lucide.createIcons();
-            if (viewKey === 'gr') setGraphMode(graphMode);
+            if (viewKey === 'gr') {
+                if (typeof setGraphMode === 'function') setGraphMode(graphMode);
+            }
         }
+        window.switchNavTab = switchNavTab;
 
         // ── Agent status bar ─────────────────────────────────────────────────────
         // Fallback static list shown if API is unreachable
@@ -688,46 +692,66 @@
 
         // ── 3D graph ─────────────────────────────────────────────────────────────
         let graph3D = null, graphMode = '3d';
+        window.graphMode = graphMode;
 
         function setGraphMode(mode) {
             graphMode = (mode === '3d' && typeof ForceGraph3D !== 'undefined') ? '3d' : '2d';
+            window.graphMode = graphMode;
             const el  = document.getElementById('network-3d');
             const svg = document.getElementById('network-svg');
-            el.classList.toggle('hidden', graphMode !== '3d');
-            svg.classList.toggle('hidden', graphMode !== '2d');
-            document.getElementById('gm-3d').className = 'px-3 py-1 ' + (graphMode === '3d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
-            document.getElementById('gm-2d').className = 'px-3 py-1 ' + (graphMode === '2d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+            if (el) el.classList.toggle('hidden', graphMode !== '3d');
+            if (svg) svg.classList.toggle('hidden', graphMode !== '2d');
+            const b3d = document.getElementById('gm-3d');
+            const b2d = document.getElementById('gm-2d');
+            if (b3d) b3d.className = 'px-3 py-1 ' + (graphMode === '3d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
+            if (b2d) b2d.className = 'px-3 py-1 ' + (graphMode === '2d' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e] text-slate-400');
             if (graphMode === '3d') render3DGraph();
+            else if (graphMode === '2d') renderNetworkGraph();
         }
+        window.setGraphMode = setGraphMode;
 
         function render3DGraph() {
             const el = document.getElementById('network-3d');
-            const data = {
-                nodes: nodes.map((n, i) => ({ id: i, name: n[0], type: n[3], val: n[4] })),
-                links: edges.map((e, i) => ({ source: e[0], target: e[1], conflict: !!e[2], label: edgeLabels[i] || '' }))
-            };
-            if (!graph3D) {
-                graph3D = ForceGraph3D()(el)
-                    .backgroundColor('#0b0f14')
-                    .nodeLabel('name')
-                    .nodeColor(n => nodeColors[n.type])
-                    .nodeVal(n => n.val / 4)
-                    .nodeOpacity(0.92)
-                    .nodeResolution(20)
-                    .linkColor(l => l.conflict ? '#ff4d5e' : '#3b5f8f')
-                    .linkWidth(l => l.conflict ? 2.5 : 1)
-                    .linkOpacity(0.7)
-                    .linkLabel('label')
-                    .linkDirectionalParticles(l => l.conflict ? 4 : 0)
-                    .linkDirectionalParticleWidth(2)
-                    .onNodeClick(n => {
-                        pickNode(n.id);
-                        const d = 90, r = 1 + d / Math.hypot(n.x, n.y, n.z);
-                        graph3D.cameraPosition({ x: n.x * r, y: n.y * r, z: n.z * r }, n, 900);
-                    });
+            if (!el) return;
+            try {
+                if (typeof ForceGraph3D === 'undefined') {
+                    setGraphMode('2d');
+                    return;
+                }
+                const data = {
+                    nodes: nodes.map((n, i) => ({ id: i, name: n[0], type: n[3], val: n[4] })),
+                    links: edges.map((e, i) => ({ source: e[0], target: e[1], conflict: !!e[2], label: edgeLabels[i] || '' }))
+                };
+                if (!graph3D) {
+                    graph3D = ForceGraph3D()(el)
+                        .backgroundColor('#0b0f14')
+                        .nodeLabel('name')
+                        .nodeColor(n => nodeColors[n.type] || '#3b8cff')
+                        .nodeVal(n => (n.val || 10) / 4)
+                        .nodeOpacity(0.92)
+                        .nodeResolution(20)
+                        .linkColor(l => l.conflict ? '#ff4d5e' : '#3b5f8f')
+                        .linkWidth(l => l.conflict ? 2.5 : 1)
+                        .linkOpacity(0.7)
+                        .linkLabel('label')
+                        .linkDirectionalParticles(l => l.conflict ? 4 : 0)
+                        .linkDirectionalParticleWidth(2)
+                        .onNodeClick(n => {
+                            pickNode(n.id);
+                            const d = 90, r = 1 + d / (Math.hypot(n.x, n.y, n.z) || 1);
+                            graph3D.cameraPosition({ x: n.x * r, y: n.y * r, z: n.z * r }, n, 900);
+                        });
+                }
+                const w = el.clientWidth || 600;
+                graph3D.width(w).height(460).graphData(data);
+            } catch (err) {
+                console.warn("[Graph 3D] Failed, falling back to 2D:", err);
+                setGraphMode('2d');
             }
-            graph3D.width(el.clientWidth).height(460).graphData(data);
         }
+        window.render3DGraph = render3DGraph;
+        window.applyGraphJSON = applyGraphJSON;
+        window.renderNetworkGraph = renderNetworkGraph;
 
         window.addEventListener('resize', () => {
             if (graph3D && graphMode === '3d') graph3D.width(document.getElementById('network-3d').clientWidth);
